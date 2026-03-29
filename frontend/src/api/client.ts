@@ -66,6 +66,13 @@ export const api = {
     return res.json();
   },
 
+  async deleteClaim(claimId: string): Promise<void> {
+    const res = await fetch(`${BASE}/results/${claimId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Failed to delete claim");
+  },
+
   async getTrends(): Promise<Trends | null> {
     try {
       const res = await fetch(`${BASE}/trends`);

@@ -72,6 +72,15 @@ async def get_claim(claim_id: str) -> dict | None:
     return None
 
 
+async def delete_claim(claim_id: str) -> None:
+    await asyncio.to_thread(
+        lambda: client.table("logs").delete().eq("claim_id", claim_id).execute()
+    )
+    await asyncio.to_thread(
+        lambda: client.table("claims").delete().eq("id", claim_id).execute()
+    )
+
+
 async def insert_log(
     claim_id: str, step: str, status: str, message: str
 ) -> None:

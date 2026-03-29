@@ -11,6 +11,7 @@ export default function History() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<string>("All");
+  const [deleting, setDeleting] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     api
@@ -19,6 +20,22 @@ export default function History() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const handleDelete = async (id: string) => {
+    setDeleting((prev) => new Set(prev).add(id));
+    try {
+      await api.deleteClaim(id);
+      setClaims((prev) => prev.filter((c) => c.id !== id));
+    } catch {
+      /* ignore */
+    } finally {
+      setDeleting((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
 
   const filtered = claims.filter((c) => {
     if (filter !== "All" && c.verdict !== filter) return false;
@@ -87,7 +104,22 @@ export default function History() {
       ) : (
         <div className="mt-6 space-y-3">
           {filtered.map((claim) => (
-            <ResultCard key={claim.id} claim={claim} collapsed />
+            <div key={claim.id} className="relative group">
+              <ResultCard claim={claim} collapsed />
+              <button
+                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg bg-gray-800 hover:bg-red-900 text-gray-500 hover:text-red-400 disabled:opacity-50"
+                title="Delete claim"
+                disabled={deleting.has(claim.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDelete(claim.id);
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18" /><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+                </svg>
+              </button>
+            </div>
           ))}
         </div>
       )}

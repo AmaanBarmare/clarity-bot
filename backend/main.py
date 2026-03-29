@@ -103,6 +103,15 @@ async def get_result(claim_id: str):
     return claim
 
 
+@api.delete("/results/{claim_id}")
+async def delete_result(claim_id: str):
+    claim = await database.get_claim(claim_id)
+    if claim is None:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    await database.delete_claim(claim_id)
+    return {"status": "deleted", "claim_id": claim_id}
+
+
 @api.get("/trends")
 async def get_trends():
     trends = await database.get_trends()
