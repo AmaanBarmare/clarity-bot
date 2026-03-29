@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { api } from "../api/client";
 import type { Claim, LogEvent } from "../api/client";
 import ResultCard from "../components/ResultCard";
@@ -33,6 +33,12 @@ export default function CheckClaim() {
   const [result, setResult] = useState<Claim | null>(null);
   const [showPipeline, setShowPipeline] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    return () => {
+      esRef.current?.close();
+    };
+  }, []);
 
   const pollResult = useCallback((claimId: string) => {
     let attempts = 0;
