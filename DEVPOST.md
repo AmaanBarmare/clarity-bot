@@ -36,6 +36,9 @@ Server-Sent Events, so users can watch the agent think.
   with animated pipeline steps, donut/bar charts (plain SVG, no
   charting libraries), and a terminal-style agent logs panel.
 - **Supabase**: hosted Postgres for claims, logs, and trend data.
+- **Vercel**: deployed as a single project — FastAPI serverless backend
+  + pre-built React frontend served via CDN. DB-backed SSE polling
+  replaces in-memory queues for serverless compatibility.
 
 ## Challenges we ran into
 
@@ -48,6 +51,9 @@ Server-Sent Events, so users can watch the agent think.
   to prevent blocking the FastAPI event loop.
 - Tuning the source credibility filter so that scores accurately
   reflect evidence quality across different topic domains.
+- Deploying to Vercel's serverless platform required replacing
+  in-memory SSE queues with DB-backed polling and splitting the
+  check/execute flow for stateless function compatibility.
 
 ## Accomplishments we're proud of
 
@@ -74,4 +80,5 @@ real-time agent observability — no WebSocket complexity needed.
 ## Built with
 
 NemoClaw, NVIDIA OpenShell, OpenClaw, Nemotron, Gemini API,
-FastAPI, React, Vite, TypeScript, Tailwind CSS, Supabase, SSE, Python
+FastAPI, React, Vite, TypeScript, Tailwind CSS, Supabase, SSE,
+Python, Vercel

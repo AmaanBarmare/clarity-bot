@@ -47,13 +47,14 @@ claritybot/
 │           └── StatusDot.tsx      ← Backend online/offline indicator
 │
 ├── backend/
-│   ├── main.py                    ← FastAPI app + all 4 endpoints
+│   ├── main.py                    ← FastAPI app, APIRouter(/api), 7 routes
 │   ├── agent.py                   ← Pipeline orchestrator
 │   ├── database.py                ← Supabase client wrapper
-│   ├── queue_manager.py           ← asyncio.Queue per claim for SSE
+│   ├── queue_manager.py           ← asyncio.Queue per claim (local dev)
 │   ├── skills/
 │   │   └── fact_check/
 │   │       ├── __init__.py
+│   │       ├── gemini.py          ← Shared Gemini helper (retry + backoff)
 │   │       ├── extractor.py       ← Step 1: parse assertions
 │   │       ├── searcher.py        ← Step 2: Serper web search (Google results)
 │   │       ├── crossref.py        ← Step 3: Gemini cross-reference (with credibility labels)
@@ -69,7 +70,14 @@ claritybot/
 │   ├── openclaw-sandbox.yaml      ← Network allowlist policy
 │   └── setup.sh                   ← One-command sandbox start
 │
-├── .gitignore                     ← includes .env and node_modules
+├── index.py                       ← Vercel FastAPI entrypoint
+├── vercel.json                    ← Vercel config (framework: fastapi)
+├── requirements.txt               ← Root pip deps for Vercel
+├── pyproject.toml                 ← Python project metadata for Vercel
+├── scripts/
+│   └── vercel-build.sh            ← Builds frontend into public/ for CDN
+├── .vercelignore                  ← Controls Vercel upload
+├── .gitignore                     ← includes .env, node_modules, public/
 ├── start.sh                       ← starts backend + frontend together
 └── README.md
 ```
@@ -666,12 +674,27 @@ async def run_pipeline(claim: str, claim_id: str) -> None:
 ```
 Create backend/main.py — complete FastAPI application.
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
+NOTE: This was significantly refactored for Vercel deployment.
+All routes now live under /api prefix via APIRouter(prefix="/api").
+The check/execute split exists because Vercel serverless cannot use
+BackgroundTasks (no shared memory between invocations).
+
+Key changes from original design:
+- APIRouter(prefix="/api") for all routes
+- POST /api/check only inserts the claim (no background task)
+- POST /api/execute/{claim_id} runs the pipeline synchronously
+- GET /api/logs/stream polls Supabase for logs (DB-backed SSE)
+- GET /api/logs/{claim_id} returns historical logs (REST)
+- Dynamic CORS origins (localhost + VERCEL_URL + VERCEL_BRANCH_URL)
+- Optional StaticFiles mount for public/ (serves frontend on Vercel)
+
+from fastapi import FastAPI, HTTPException, Query, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
-import uuid, asyncio, json
+import uuid, asyncio, json, os
 
 load_dotenv()
 
@@ -680,10 +703,20 @@ from agent import run_pipeline
 from queue_manager import queue_manager
 
 app = FastAPI(title="ClarityBot API", version="1.0.0")
+router = APIRouter(prefix="/api")
+
+# Dynamic CORS
+origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+if os.getenv("ALLOWED_ORIGINS"):
+    origins += [o.strip() for o in os.getenv("ALLOWED_ORIGINS").split(",")]
+for var in ("VERCEL_URL", "VERCEL_BRANCH_URL"):
+    val = os.getenv(var)
+    if val:
+        origins.append(f"https://{val}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -692,7 +725,6 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     print("ClarityBot API starting...")
-    # Verify Supabase connection
     try:
         await database.get_all_claims()
         print("Supabase connected.")
@@ -702,64 +734,62 @@ async def startup():
 class CheckRequest(BaseModel):
     claim: str
 
-@app.post("/check")
-async def check_claim(req: CheckRequest, background_tasks: BackgroundTasks):
+@router.post("/check")
+async def check_claim(req: CheckRequest):
     if not req.claim.strip():
         raise HTTPException(400, "Claim cannot be empty")
     if len(req.claim) > 1000:
         raise HTTPException(400, "Claim too long (max 1000 chars)")
-    
     claim_id = str(uuid.uuid4())
     await database.insert_claim(claim_id, req.claim.strip())
-    queue_manager.create(claim_id)
-    background_tasks.add_task(run_pipeline, req.claim.strip(), claim_id)
-    
-    return {"claim_id": claim_id, "status": "processing"}
+    return {"claim_id": claim_id, "status": "submitted"}
 
-@app.get("/results")
+@router.post("/execute/{claim_id}")
+async def execute_pipeline(claim_id: str):
+    claim = await database.get_claim(claim_id)
+    if not claim:
+        raise HTTPException(404, "Claim not found")
+    await run_pipeline(claim["text"], claim_id)
+    return {"status": "completed"}
+
+@router.get("/results")
 async def get_results():
     return await database.get_all_claims()
 
-@app.get("/results/{claim_id}")
+@router.get("/results/{claim_id}")
 async def get_result(claim_id: str):
     result = await database.get_claim(claim_id)
     if not result:
         raise HTTPException(404, "Claim not found")
     return result
 
-@app.get("/trends")
+@router.get("/trends")
 async def get_trends():
     return await database.get_trends()
 
-@app.get("/logs/stream")
+@router.get("/logs/stream")
 async def stream_logs(claim_id: str = Query(...)):
+    # DB-backed SSE: polls Supabase for new log rows
     async def event_generator():
-        q = queue_manager.get(claim_id)
-        if not q:
-            # Already finished — return done sentinel
-            yield {"data": json.dumps({"step":"done","status":"done",
-                                       "message":"Pipeline complete","ts":""})}
-            return
-        
-        while True:
-            try:
-                event = await asyncio.wait_for(q.get(), timeout=60.0)
-            except asyncio.TimeoutError:
-                yield {"data": json.dumps({"step":"heartbeat","status":"running",
-                                           "message":"...","ts":""})}
-                continue
-            
-            if event is None:  # sentinel
-                queue_manager.cleanup(claim_id)
-                break
-            
-            yield {"data": json.dumps(event)}
-    
+        # ... polls database.get_logs(claim_id) every ~450ms
+        # ... yields SSE events, heartbeats every 25s
+        # ... terminates on emitter done, error, or 900s timeout
+        pass
     return EventSourceResponse(event_generator())
 
-@app.get("/health")
+@router.get("/logs/{claim_id}")
+async def get_logs(claim_id: str):
+    return await database.get_logs(claim_id)
+
+@router.get("/health")
 async def health():
     return {"status": "ok"}
+
+app.include_router(router)
+
+# Serve frontend static files if public/ exists
+if os.path.isdir("public"):
+    app.mount("/", StaticFiles(directory="public", html=True))
 ```
 
 ---
@@ -769,7 +799,13 @@ async def health():
 ```
 Create frontend/src/api/client.ts
 
-const BASE = "http://localhost:8000"
+NOTE: BASE changed from "http://localhost:8000" to "/api" (relative).
+This works both locally (Vite proxy) and on Vercel (same origin).
+Two new methods added: executePipeline() and getLogs().
+
+const BASE =
+  import.meta.env.VITE_API_BASE ??
+  (import.meta.env.DEV ? "/api" : "/api")
 
 export interface Claim {
   id: string
@@ -799,7 +835,7 @@ export interface Trends {
 }
 
 export const api = {
-  submitClaim: async (claim: string): Promise<{ claim_id: string }> => {
+  submitClaim: async (claim: string): Promise<{ claim_id: string; status: string }> => {
     const res = await fetch(`${BASE}/check`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -807,6 +843,11 @@ export const api = {
     })
     if (!res.ok) throw new Error(await res.text())
     return res.json()
+  },
+
+  executePipeline: async (claimId: string): Promise<void> => {
+    const res = await fetch(`${BASE}/execute/${claimId}`, { method: "POST" })
+    if (!res.ok) throw new Error(await res.text())
   },
 
   getResult: async (claim_id: string): Promise<Claim> => {
@@ -824,6 +865,12 @@ export const api = {
   getTrends: async (): Promise<Trends | null> => {
     const res = await fetch(`${BASE}/trends`)
     if (!res.ok) return null
+    return res.json()
+  },
+
+  getLogs: async (claimId: string): Promise<LogEvent[]> => {
+    const res = await fetch(`${BASE}/logs/${claimId}`)
+    if (!res.ok) return []
     return res.json()
   },
 
@@ -1154,6 +1201,51 @@ nemoclaw onboard --name claritybot-sandbox
 nemoclaw start
 echo "NemoClaw sandbox running."
 ```
+
+---
+
+## Vercel Deployment
+
+The app is deployed to Vercel at **https://clarity-bot-brown.vercel.app**.
+
+### Architecture on Vercel
+
+- `index.py` at the repo root loads `backend/main.py` via `sys.path` manipulation.
+  Vercel's `@vercel/python` builder uses this as the FastAPI entrypoint.
+- `vercel.json` sets `framework: "fastapi"`, SPA rewrites, and a redirect for `/`.
+- Frontend is pre-built into `public/` by `scripts/vercel-build.sh` and served
+  by Vercel's CDN.
+- All API routes live under `/api/...` — same origin as the frontend.
+- SSE uses DB-backed polling (not in-memory queues) for serverless compatibility.
+
+### Deploy commands
+
+```bash
+bash scripts/vercel-build.sh   # Build frontend → public/
+npx vercel --prod              # Deploy to production
+```
+
+### Environment variables (Vercel dashboard)
+
+```
+GEMINI_API_KEY
+SERPER_API_KEY
+SUPABASE_URL
+SUPABASE_KEY
+```
+
+Function timeout: **300 seconds** (Pro plan) in Settings → Functions → Max Duration.
+
+### Key files added for Vercel
+
+| File | Purpose |
+|------|---------|
+| `index.py` | Vercel FastAPI entrypoint — imports app from backend/main.py |
+| `vercel.json` | Framework config, SPA rewrites, region selection |
+| `requirements.txt` (root) | Root-level pip deps for Vercel builder |
+| `pyproject.toml` (root) | Python project metadata for Vercel builder |
+| `scripts/vercel-build.sh` | Builds Vite frontend into public/ for CDN |
+| `.vercelignore` | Controls what gets uploaded (allows public/) |
 
 ---
 

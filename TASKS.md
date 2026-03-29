@@ -448,71 +448,75 @@ python test_pipeline.py
 ```
 Create backend/main.py — complete FastAPI application.
 
+All routes are mounted under /api prefix via APIRouter(prefix="/api").
+
 Import and configure:
-  from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
+  from fastapi import FastAPI, HTTPException, Query, APIRouter
   from fastapi.middleware.cors import CORSMiddleware
+  from fastapi.staticfiles import StaticFiles
   from sse_starlette.sse import EventSourceResponse
   from pydantic import BaseModel
   from dotenv import load_dotenv
   load_dotenv()
 
-  CORS: allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"]
+  CORS: Dynamic origins — defaults to localhost:5173 + 127.0.0.1:5173.
+  Also reads ALLOWED_ORIGINS env var (comma-separated).
+  Also reads VERCEL_URL and VERCEL_BRANCH_URL (injected by Vercel)
+  and adds them as https:// origins.
 
 Startup event: log "ClarityBot API starting..." and verify Supabase by calling
 get_all_claims(). Print result or warning.
 
-Endpoints:
+Routes (all under /api prefix):
 
-POST /check
+POST /api/check
   Body: {"claim": str}
   Validate: non-empty, max 1000 chars
   Generate claim_id = str(uuid.uuid4())
   await database.insert_claim(claim_id, claim)
-  queue_manager.create(claim_id)          ← MUST be before add_task
-  background_tasks.add_task(run_pipeline, claim, claim_id)
-  Return: {"claim_id": claim_id, "status": "processing"}
+  Return: {"claim_id": claim_id, "status": "submitted"}
+  (No BackgroundTasks — pipeline is triggered separately via /api/execute)
 
-GET /results
+POST /api/execute/{claim_id}
+  Runs the full pipeline synchronously (for Vercel serverless compatibility).
+  Verifies the claim exists first.
+  Returns: {"status": "completed"}
+
+GET /api/results
   Return await database.get_all_claims()
 
-GET /results/{claim_id}
+GET /api/results/{claim_id}
   result = await database.get_claim(claim_id)
   If None: raise HTTPException(404)
   Return result
 
-GET /trends
+GET /api/trends
   Return await database.get_trends()
 
-GET /logs/stream?claim_id=xxx
-  async def event_generator():
-    q = queue_manager.get(claim_id)
-    if not q:
-      yield {"data": json.dumps({"step":"done","status":"done",
-                                  "message":"Complete","ts":""})}
-      return
-    while True:
-      try:
-        event = await asyncio.wait_for(q.get(), timeout=60.0)
-      except asyncio.TimeoutError:
-        yield {"data": json.dumps({"step":"heartbeat","status":"running",
-                                    "message":"...","ts":""})}
-        continue
-      if event is None:
-        queue_manager.cleanup(claim_id)
-        break
-      yield {"data": json.dumps(event)}
-  return EventSourceResponse(event_generator())
+GET /api/logs/stream?claim_id=xxx
+  DB-backed SSE: polls Supabase for new logs every ~450ms.
+  Yields SSE events with event: log.
+  Sends heartbeat every 25s to keep connection alive.
+  Terminates when emitter done, error, or 900s timeout.
 
-GET /health
+GET /api/logs/{claim_id}
+  Historical logs REST endpoint.
+  Return await database.get_logs(claim_id)
+
+GET /api/health
   Return {"status": "ok"}
+
+Static files:
+  If public/ directory exists, mount StaticFiles at / after the API router.
+  This serves the pre-built frontend on Vercel.
 ```
 
 **Verify:**
 ```bash
 cd backend && uvicorn main:app --port 8000 &
-curl http://localhost:8000/health
+curl http://localhost:8000/api/health
 # Should return {"status":"ok"}
-curl http://localhost:8000/results
+curl http://localhost:8000/api/results
 # Should return [] (empty array from Supabase)
 ```
 
@@ -523,7 +527,13 @@ curl http://localhost:8000/results
 ```
 Create frontend/src/api/client.ts
 
-const BASE = "http://localhost:8000"
+const BASE =
+  import.meta.env.VITE_API_BASE ??
+  (import.meta.env.DEV ? "/api" : "/api")
+
+BASE defaults to "/api" (relative). This works both locally (Vite proxy
+forwards /api to http://127.0.0.1:8000) and on Vercel (same origin).
+Override with VITE_API_BASE env var if needed.
 
 Export interfaces:
   Claim { id, text, score, verdict, explanation, sources[], created_at }
@@ -532,16 +542,23 @@ Export interfaces:
 
 Export api object with methods:
   submitClaim(claim: string): Promise<{claim_id: string}>
-    POST /check with {claim}
+    POST /api/check with {claim}
+
+  executePipeline(claimId: string): Promise<void>
+    POST /api/execute/{claimId} — runs pipeline synchronously
+    (needed for Vercel serverless, which cannot use BackgroundTasks)
 
   getResult(claim_id: string): Promise<Claim>
-    GET /results/{claim_id}
+    GET /api/results/{claim_id}
 
   getAllResults(): Promise<Claim[]>
-    GET /results
+    GET /api/results
 
   getTrends(): Promise<Trends | null>
-    GET /trends, return null on failure
+    GET /api/trends, return null on failure
+
+  getLogs(claimId: string): Promise<LogEvent[]>
+    GET /api/logs/{claimId} — fetches historical logs (REST endpoint)
 
   streamLogs(claim_id, onEvent, onDone): EventSource
     new EventSource(BASE/logs/stream?claim_id=xxx)
@@ -551,7 +568,7 @@ Export api object with methods:
     Close and call onDone on EventSource error
 
   checkHealth(): Promise<boolean>
-    GET /health with AbortSignal.timeout(3000)
+    GET /api/health with AbortSignal.timeout(3000)
     Return true if ok, false on any failure
 ```
 

@@ -28,9 +28,8 @@ feature completeness. When in doubt, ask: does this unblock the demo loop?
 ```
 claritybot/
 ├── frontend/                   React + Vite + TypeScript + Tailwind (port 5173)
-│   ├── index.html
-│   ├── vite.config.ts
-│   ├── tailwind.config.ts
+│   ├── index.html              Google Fonts (Inter + JetBrains Mono), title "ClarityBot"
+│   ├── vite.config.ts          Tailwind plugin + /api proxy to backend
 │   ├── package.json
 │   └── src/
 │       ├── main.tsx
@@ -51,13 +50,14 @@ claritybot/
 │           └── StatusDot.tsx
 │
 ├── backend/                    FastAPI + Python (port 8000)
-│   ├── main.py                 FastAPI app, all 4 routes, CORS, startup
+│   ├── main.py                 FastAPI app, APIRouter(/api), 7 routes, CORS, startup
 │   ├── agent.py                Pipeline orchestrator — calls skills in order
 │   ├── database.py             ALL Supabase reads/writes — nowhere else
 │   ├── queue_manager.py        asyncio.Queue registry — one queue per claim_id
 │   ├── skills/
 │   │   └── fact_check/
 │   │       ├── __init__.py
+│   │       ├── gemini.py       Shared Gemini helper — retry with backoff
 │   │       ├── extractor.py    Step 1: extract verifiable assertions
 │   │       ├── searcher.py     Step 2: Serper web search (Google results)
 │   │       ├── crossref.py     Step 3: Gemini cross-reference (with credibility labels)
@@ -73,14 +73,21 @@ claritybot/
 │   ├── openclaw-sandbox.yaml   Network allowlist policy
 │   └── setup.sh                One-command sandbox bootstrap
 │
+├── index.py                    Vercel FastAPI entrypoint — loads backend/main.py
+├── pyproject.toml              Python project metadata for Vercel builder
+├── requirements.txt            Root-level pip deps (same as backend/) for Vercel
+├── vercel.json                 Vercel config — framework:fastapi, SPA rewrites
+├── scripts/
+│   └── vercel-build.sh         Builds frontend into public/ for Vercel CDN
+├── .vercelignore               Controls Vercel upload (allows public/)
 ├── .gitignore
-├── start.sh                    Starts backend + frontend together
+├── start.sh                    Starts backend + frontend together (local dev)
 └── README.md
 ```
 
 ---
 
-## How to run
+## How to run (local dev)
 
 ```bash
 # Install backend deps
@@ -96,6 +103,57 @@ bash start.sh
 - Backend:  http://localhost:8000
 - Frontend: http://localhost:5173
 - API docs: http://localhost:8000/docs
+
+The Vite dev server proxies `/api` requests to `http://127.0.0.1:8000`,
+so frontend and backend share the same origin during local development.
+
+## Vercel deployment
+
+The app is deployed as a single Vercel project at:
+**https://clarity-bot-brown.vercel.app**
+
+Vercel runs the FastAPI app from `index.py` at the repo root, which
+loads `backend/main.py`. The frontend is pre-built into `public/` and
+served by Vercel's CDN. All API routes live under `/api/...`.
+
+### How it works on Vercel
+
+- `index.py` adds `backend/` to `sys.path` and imports `app` from
+  `backend/main.py`. Vercel's `@vercel/python` builder uses this as
+  the entrypoint.
+- `vercel.json` sets `framework: "fastapi"`, SPA rewrites
+  (`/(.*) → /index.html`), and a redirect for `/` → `/index.html`.
+- `scripts/vercel-build.sh` builds the Vite frontend into `public/`.
+  Run this locally before `npx vercel --prod` since `.gitignore`
+  excludes `public/` and `.vercelignore` allows it.
+- Function timeout must be set to **300 seconds** (Pro plan) in the
+  Vercel dashboard under Settings → Functions → Max Duration.
+
+### Deploy commands
+
+```bash
+# Build frontend into public/
+bash scripts/vercel-build.sh
+
+# Deploy to production
+npx vercel --prod
+```
+
+### Environment variables on Vercel
+
+Set these in the Vercel dashboard (Settings → Environment Variables)
+for Production, Preview, and Development:
+
+```
+GEMINI_API_KEY
+SERPER_API_KEY
+SUPABASE_URL
+SUPABASE_KEY
+```
+
+CORS is automatically configured: the backend reads `VERCEL_URL` and
+`VERCEL_BRANCH_URL` (injected by Vercel) and adds them as allowed
+origins alongside `ALLOWED_ORIGINS` (optional, comma-separated).
 
 ---
 
@@ -122,10 +180,10 @@ SUPABASE_KEY=
 
 | File | Responsibility |
 |------|----------------|
-| `main.py` | FastAPI app, all 4 routes, CORS middleware, startup event |
+| `main.py` | FastAPI app, APIRouter(`/api`), 7 routes, dynamic CORS, startup, optional StaticFiles for `public/` |
 | `database.py` | Every Supabase read/write — no DB calls anywhere else |
 | `agent.py` | Calls skills in order, catches exceptions, closes queue |
-| `queue_manager.py` | SSE asyncio.Queue per claim — create, push, close, cleanup |
+| `queue_manager.py` | SSE asyncio.Queue per claim — create, push, close, cleanup (used locally; Vercel uses DB-backed SSE) |
 | `skills/fact_check/gemini.py` | Shared Gemini helper — retry with backoff, strip markdown fences |
 | `skills/fact_check/extractor.py` | Parse claim into verifiable assertions via Gemini |
 | `skills/fact_check/searcher.py` | Serper web search (Google results) — 3 assertions x 3 results |
@@ -133,6 +191,26 @@ SUPABASE_KEY=
 | `skills/fact_check/scorer.py` | Map support_level to score 1–10 + verdict label (with source quality caps) |
 | `skills/fact_check/emitter.py` | Write Supabase, upsert trends, push done event |
 | `skills/fact_check/source_credibility.py` | Trusted source registry + credibility scoring for 3 topic domains |
+
+### Backend routes
+
+All routes are mounted under the `/api` prefix via `APIRouter(prefix="/api")`:
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/health` | GET | Health check — returns `{"status": "ok"}` |
+| `/api/check` | POST | Submit claim (insert only, returns `claim_id`) |
+| `/api/execute/{claim_id}` | POST | Run the full pipeline synchronously (for Vercel serverless) |
+| `/api/results` | GET | All claims from Supabase, ordered by date |
+| `/api/results/{claim_id}` | GET | Single claim or 404 |
+| `/api/trends` | GET | Latest week trend data |
+| `/api/logs/stream` | GET | SSE stream — polls Supabase for logs (DB-backed, serverless-safe) |
+| `/api/logs/{claim_id}` | GET | Historical logs for a claim (REST endpoint) |
+
+The split between `POST /api/check` and `POST /api/execute/{claim_id}`
+exists because Vercel's serverless functions cannot use `BackgroundTasks`
+(no shared memory between invocations). The frontend calls `check` first,
+then starts the SSE stream, then calls `execute` to run the pipeline.
 
 ### Supabase client — critical rule
 
@@ -182,14 +260,25 @@ Every event pushed to the SSE queue follows this shape:
 }
 ```
 
-### SSE queue — critical ordering rule
+### SSE streaming — DB-backed (serverless-safe)
 
-In POST /check, always call queue_manager.create(claim_id) BEFORE
-background_tasks.add_task(run_pipeline, ...). If the pipeline starts before
-the queue exists, the first log events are lost and never reach the frontend.
+The SSE endpoint (`GET /api/logs/stream`) polls Supabase for new logs
+instead of reading from an in-memory queue. This works on both local dev
+and Vercel's stateless serverless functions.
 
-The pipeline's finally block must always call queue_manager.close(claim_id)
-regardless of success or failure. None is the sentinel that terminates the stream.
+The stream polls `database.get_logs(claim_id)` every ~450ms, yielding
+new log entries as SSE events with `event: log`. It terminates when:
+- The `emitter` step emits `status: done`
+- An `error` step appears
+- The claim's `score` field is non-null in the DB
+- 900 seconds elapse (hard timeout)
+
+Heartbeat events (`event: heartbeat`) are sent every 25 seconds to
+keep the connection alive.
+
+The `queue_manager` is still used locally by `agent.py` to push events,
+but the SSE endpoint does not read from it — it always reads from the DB.
+This means SSE works both for live claims and for historical playback.
 
 ### Gemini API calls
 
@@ -251,7 +340,14 @@ model can weight evidence by source quality.
 
 ### CORS
 
-Backend allows only http://localhost:5173. Do not change this to *.
+Backend CORS origins are determined dynamically:
+- Default: `http://localhost:5173`, `http://127.0.0.1:5173`
+- `ALLOWED_ORIGINS` env var: comma-separated list of additional origins
+- `VERCEL_URL` and `VERCEL_BRANCH_URL`: auto-added as `https://` origins
+  when running on Vercel (these env vars are injected by Vercel)
+
+Do not set CORS to `*` (allow all origins). For custom domains, add
+them to `ALLOWED_ORIGINS` in the Vercel dashboard.
 
 ---
 
@@ -274,6 +370,11 @@ Backend allows only http://localhost:5173. Do not change this to *.
 - Never call fetch() or new EventSource() directly in a page or component
 - All methods are async and typed with interfaces from the same file
 - api.streamLogs() returns an EventSource — always close it in cleanup
+- BASE URL defaults to `/api` (relative) — works both locally (Vite proxy)
+  and on Vercel (same origin). Override with `VITE_API_BASE` env var.
+- `api.executePipeline(claimId)` runs the pipeline synchronously via
+  `POST /api/execute/{claim_id}` — needed for Vercel serverless
+- `api.getLogs(claimId)` fetches historical logs via `GET /api/logs/{claim_id}`
 
 ### Pipeline step key mapping
 
@@ -284,8 +385,11 @@ These keys must match exactly what the backend emits — do not rename either si
 extractor → searcher → crossref → scorer → emitter
 ```
 
-After the SSE stream ends, poll api.getResult(claim_id) every 1 second
-(max 20 attempts) until score !== null before rendering the ResultCard.
+After starting the SSE stream, CheckClaim.tsx calls api.executePipeline()
+to run the pipeline. The SSE stream displays step progress as it arrives.
+After the stream ends, poll api.getResult(claim_id) every 1 second
+(max 180 attempts / 3 minutes) until score !== null before rendering
+the ResultCard. EventSource is cleaned up on component unmount.
 
 ### localStorage handoff
 
@@ -388,7 +492,8 @@ A prompt injection attack cannot exfiltrate data to unauthorized endpoints."
 
 Note: The search provider was changed from Google Custom Search JSON API
 (which was discontinued for new customers) to Serper.dev, which returns
-Google search results via a simple REST API.
+Google search results via a simple REST API. The Serper API key is set
+in `SERPER_API_KEY` and the endpoint is `https://google.serper.dev/search`.
 
 ---
 

@@ -122,8 +122,9 @@ grep -r "nvapi-" backend/ frontend/  # NVIDIA key prefix
 ### Frontend API keys
 
 The frontend never has direct access to any API key. All external API
-calls go through the FastAPI backend. The frontend only calls:
-  http://localhost:8000
+calls go through the FastAPI backend. The frontend calls relative URLs
+under `/api/...` — locally these are proxied by Vite to port 8000, and
+on Vercel they are routed to the same-origin FastAPI serverless function.
 
 The Supabase anon key is used only in backend/database.py.
 It is never included in the frontend bundle or any frontend file.
@@ -134,7 +135,7 @@ It is never included in the frontend bundle or any frontend file.
 
 ### Backend (FastAPI — authoritative)
 
-POST /check validates:
+POST /api/check validates:
 - claim field exists in request body
 - claim is a non-empty string after strip()
 - claim length is max 1000 characters
@@ -200,13 +201,14 @@ If ClarityBot were deployed beyond the hackathon:
 
 ## 6. CORS policy
 
-The backend allows only `http://localhost:5173` as an origin.
-This prevents other websites from making requests to the API
-using a visitor's browser session.
+The backend CORS origins are determined dynamically:
+- Default: `http://localhost:5173`, `http://127.0.0.1:5173`
+- `ALLOWED_ORIGINS` env var: comma-separated list of additional origins
+- `VERCEL_URL` and `VERCEL_BRANCH_URL`: auto-added as `https://` origins
+  when running on Vercel (these env vars are injected by Vercel)
 
-Do not change this to `*` (allow all origins) for any reason during
-the hackathon build. If deploying to a public URL, update to the
-exact deployed frontend URL.
+Do not change this to `*` (allow all origins) for any reason. For
+custom domains, add them to `ALLOWED_ORIGINS` in the Vercel dashboard.
 
 ---
 
@@ -244,7 +246,7 @@ Run through every item before submitting on Devpost:
 - [ ] No API keys hardcoded in any file (grep check above)
 - [ ] backend/.env.example has all keys with empty values
 - [ ] backend/.env is in .gitignore
-- [ ] CORS only allows localhost:5173 (or deployed frontend URL)
+- [ ] CORS only allows localhost:5173 and Vercel deployment URLs (no wildcard *)
 - [ ] POST /check rejects empty claims and claims over 1000 chars
 - [ ] No personal data stored in Supabase
 - [ ] NemoClaw sandbox is running before the demo

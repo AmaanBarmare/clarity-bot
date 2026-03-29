@@ -61,9 +61,10 @@ persistent HTTP connection (Server-Sent Events). The UI animates each
 step in sequence as the events arrive — the same way a terminal streams
 build output.
 
-This required building a lightweight event queue system where each
-submitted claim gets its own isolated channel, so multiple claims running
-simultaneously don't mix their logs.
+The SSE endpoint polls Supabase for new log rows instead of reading from
+an in-memory queue, which makes it work on both local dev and Vercel's
+stateless serverless functions. This also means the same endpoint serves
+both live streams and historical playback.
 
 ### 3. NVIDIA NemoClaw sandbox (released 12 days before the hackathon)
 
@@ -124,6 +125,7 @@ handles one request at a time and one that handles concurrent requests properly.
 | Web search | Serper.dev (Google results) | Primary source retrieval |
 | Database | Supabase (Postgres) | Stores claims, logs, trends |
 | Realtime | Server-Sent Events | Live log streaming to frontend |
+| Deployment | Vercel | Serverless hosting (FastAPI + static frontend) |
 
 ---
 
@@ -131,26 +133,30 @@ handles one request at a time and one that handles concurrent requests properly.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│              React Dashboard (port 5173)            │
+│              React Dashboard                        │
+│       (Vite dev :5173 / Vercel CDN in prod)         │
 │                                                     │
 │  Check Claim │ History │ Trend Report │ Agent Logs  │
 └──────────────────────┬──────────────────────────────┘
-                       │  HTTP / Server-Sent Events
+                       │  HTTP /api/* + SSE
                        ▼
 ┌─────────────────────────────────────────────────────┐
-│              FastAPI Backend (port 8000)            │
+│           FastAPI Backend (/api prefix)             │
+│     (uvicorn :8000 local / Vercel serverless)       │
 │                                                     │
-│  POST /check   →  kick off pipeline, return ID      │
-│  GET /results  →  fetch past claims from Supabase   │
-│  GET /trends   →  weekly stats                      │
-│  GET /logs/stream  →  SSE live log push             │
+│  POST /api/check      →  insert claim, return ID    │
+│  POST /api/execute/id →  run pipeline (sync)        │
+│  GET  /api/results    →  past claims from Supabase  │
+│  GET  /api/trends     →  weekly stats               │
+│  GET  /api/logs/stream → SSE (DB-backed polling)    │
+│  GET  /api/logs/id    →  historical logs (REST)     │
 └──────────────────────┬──────────────────────────────┘
                        │  subprocess
                        ▼
 ┌─────────────────────────────────────────────────────┐
 │       NemoClaw Sandbox (NVIDIA OpenShell)           │
 │                                                     │
-│  Network policy: deny all except Gemini + Serper     │
+│  Network policy: deny all except Gemini + Serper    │
 │  Filesystem: isolated to /sandbox only              │
 └──────────────────────┬──────────────────────────────┘
                        │
@@ -178,8 +184,10 @@ handles one request at a time and one that handles concurrent requests properly.
 ```
 claritybot/
 ├── frontend/
+│   ├── index.html               Google Fonts (Inter + JetBrains Mono)
+│   ├── vite.config.ts           Tailwind plugin + /api proxy to backend
 │   └── src/
-│       ├── api/client.ts        All API calls in one place
+│       ├── api/client.ts        All API calls (BASE = "/api")
 │       ├── pages/
 │       │   ├── CheckClaim.tsx   Submit form + live pipeline UI
 │       │   ├── History.tsx      Past fact-checks with search + filter
@@ -192,11 +200,12 @@ claritybot/
 │           └── LogLine.tsx      Single terminal log row
 │
 ├── backend/
-│   ├── main.py                  FastAPI server + all endpoints
+│   ├── main.py                  FastAPI app, APIRouter(/api), 7 routes
 │   ├── agent.py                 Pipeline orchestrator
 │   ├── database.py              All Supabase reads/writes
-│   ├── queue_manager.py         SSE event queue (one per claim)
+│   ├── queue_manager.py         SSE event queue (local dev)
 │   └── skills/fact_check/
+│       ├── gemini.py            Shared Gemini helper (retry + backoff)
 │       ├── extractor.py         Step 1
 │       ├── searcher.py          Step 2
 │       ├── crossref.py          Step 3 (with credibility labels)
@@ -204,9 +213,17 @@ claritybot/
 │       ├── emitter.py           Step 5
 │       └── source_credibility.py  Trusted source registry
 │
-└── nemoclaw/
-    ├── openclaw-sandbox.yaml    Network allowlist policy
-    └── setup.sh                 Sandbox bootstrap
+├── nemoclaw/
+│   ├── openclaw-sandbox.yaml    Network allowlist policy
+│   └── setup.sh                 Sandbox bootstrap
+│
+├── index.py                     Vercel FastAPI entrypoint
+├── vercel.json                  Vercel config (framework: fastapi)
+├── requirements.txt             Root pip deps for Vercel
+├── pyproject.toml               Python project metadata for Vercel
+├── scripts/
+│   └── vercel-build.sh          Builds frontend into public/ for CDN
+└── .vercelignore                Controls Vercel upload
 ```
 
 ---
@@ -331,6 +348,18 @@ streaming logs. It works over standard HTTP, requires no additional
 infrastructure, and reconnects automatically if the connection drops.
 WebSockets would add complexity with no benefit for this use case.
 
+**Why DB-backed SSE instead of in-memory queues?**
+The original design used in-memory asyncio.Queue per claim. This works
+locally but breaks on Vercel's serverless platform, where each request
+runs in its own stateless function. The SSE endpoint now polls Supabase
+for log rows, which works identically on local dev and in production.
+
+**Why split check and execute into separate endpoints?**
+Vercel serverless functions cannot use FastAPI's BackgroundTasks (no
+shared memory between invocations). The frontend calls `POST /api/check`
+to insert the claim, starts the SSE stream, then calls
+`POST /api/execute/{claim_id}` to run the pipeline synchronously.
+
 **Why plain SVG for charts instead of a charting library?**
 The charts on the Trend Report page are simple enough that a library
 would add more code than it saves. The donut and bar charts are each
@@ -353,12 +382,36 @@ incoming requests while the database query runs.
 
 ---
 
+## Deployment
+
+ClarityBot is deployed to Vercel at **https://clarity-bot-brown.vercel.app**.
+
+The app runs as a single Vercel project: `index.py` loads the FastAPI
+backend, and the pre-built React frontend is served from `public/` via
+Vercel's CDN. All API routes live under `/api/...`.
+
+```bash
+# Build frontend and deploy
+bash scripts/vercel-build.sh
+npx vercel --prod
+```
+
+Environment variables (`GEMINI_API_KEY`, `SERPER_API_KEY`, `SUPABASE_URL`,
+`SUPABASE_KEY`) are set in the Vercel dashboard. CORS is configured
+automatically using Vercel-injected `VERCEL_URL` and `VERCEL_BRANCH_URL`.
+
+Function timeout must be set to **300 seconds** (Pro plan) for long-running
+pipeline executions.
+
+---
+
 ## What I'd do differently with more time
 
 - **Move the pipeline to a task queue** — Right now the pipeline runs
-  as a FastAPI background task. Under load, this would compete with
-  the API server for resources. A proper implementation would use
-  something like Celery to run pipelines as separate worker processes.
+  synchronously inside a Vercel serverless function. Under load, this
+  would hit timeouts and concurrency limits. A proper implementation
+  would use something like Celery or Vercel Queues to run pipelines
+  as separate worker processes.
 
 - **Add user accounts** — Currently anyone can submit claims and see
   everyone's history. Adding authentication would let each user see
