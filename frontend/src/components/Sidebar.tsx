@@ -15,7 +15,7 @@ const NAV_ITEMS = [
 
 export default function Sidebar({ online }: SidebarProps) {
   return (
-    <div className="fixed left-0 top-0 w-56 h-screen bg-[#0a0a0f] border-r border-[#1e1e2e] flex flex-col">
+    <div className="fixed left-0 top-0 w-56 h-screen bg-[#111111] border-r border-gray-800 flex flex-col">
       <div className="pt-6 px-5 pb-5 border-b border-[#1e1e2e]">
         <h1 className="font-mono text-xl font-semibold text-[#00ff88]">
           ClarityBot

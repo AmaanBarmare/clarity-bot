@@ -18,7 +18,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex min-h-screen bg-[#0a0a0f] text-[#f0f0ff]">
+    <div className="flex min-h-screen bg-[#111111] text-gray-100">
       <Sidebar online={online} />
       <main className="flex-1 ml-56 overflow-y-auto">
         <Routes>

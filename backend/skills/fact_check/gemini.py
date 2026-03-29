@@ -32,5 +32,4 @@ async def call_gemini(prompt: str) -> str:
         text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
         return text.strip().strip("```json").strip("```").strip()
 
-    res.raise_for_status()
-    return ""
+    raise RuntimeError("Gemini API failed after max retries")

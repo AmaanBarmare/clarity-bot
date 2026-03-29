@@ -55,7 +55,10 @@ async def score(
     )
 
     text = await call_gemini(prompt)
-    data = json.loads(text)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Scorer received malformed JSON from Gemini: {e}")
 
     final_score = max(1, min(10, int(data.get("score", 5))))
     verdict = data.get("verdict", default_verdict)

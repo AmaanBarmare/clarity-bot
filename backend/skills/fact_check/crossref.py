@@ -54,7 +54,10 @@ async def crossref(claim: str, sources: list[dict], log_cb) -> dict:
     prompt = PROMPT.format(claim=claim, sources_text=sources_text)
 
     text = await call_gemini(prompt)
-    data = json.loads(text)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Crossref received malformed JSON from Gemini: {e}")
 
     support_level = data.get("support_level", "none")
     analysis = data.get("analysis", "")

@@ -22,7 +22,10 @@ async def extract(claim: str, log_cb) -> dict:
 
     prompt = PROMPT.format(claim=claim)
     text = await call_gemini(prompt)
-    data = json.loads(text)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Extractor received malformed JSON from Gemini: {e}")
 
     claim_type = data.get("claim_type", "factual")
     assertions = data.get("assertions", [])[:3]
