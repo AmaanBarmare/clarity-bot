@@ -54,7 +54,7 @@ export default function CheckClaim() {
       } catch {
         /* keep polling */
       }
-      if (attempts >= 20) {
+      if (attempts >= 180) {
         clearInterval(interval);
         setError("Timed out waiting for result.");
         setIsChecking(false);
@@ -85,6 +85,12 @@ export default function CheckClaim() {
         }
       );
       esRef.current = es;
+
+      void api.executePipeline(claim_id).catch((err) => {
+        setError(err instanceof Error ? err.message : "Pipeline failed.");
+        setIsChecking(false);
+        esRef.current?.close();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit claim.");
       setIsChecking(false);

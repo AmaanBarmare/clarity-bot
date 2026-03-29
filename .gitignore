@@ -15,6 +15,9 @@ venv/
 node_modules/
 frontend/dist/
 
+# Vercel static bundle (built from frontend/)
+public/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -22,8 +25,12 @@ Thumbs.db
 # Supabase local
 supabase/.temp/
 
+# Vercel (local link / project metadata)
+.vercel/
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.vercel

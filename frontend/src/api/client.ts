@@ -1,4 +1,6 @@
-const BASE = "http://localhost:8000";
+const BASE =
+  import.meta.env.VITE_API_BASE ??
+  (import.meta.env.DEV ? "/api" : "/api");
 
 export interface Claim {
   id: string;
@@ -39,6 +41,17 @@ export const api = {
       throw new Error(err.detail || "Request failed");
     }
     return res.json();
+  },
+
+  async executePipeline(claimId: string): Promise<void> {
+    const res = await fetch(`${BASE}/execute/${claimId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Request failed" }));
+      throw new Error(err.detail || "Request failed");
+    }
   },
 
   async getResult(claimId: string): Promise<Claim> {

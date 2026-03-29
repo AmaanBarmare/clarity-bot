@@ -2,10 +2,12 @@ import os
 import json
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
+
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 _url = os.getenv("SUPABASE_URL", "")
 _key = os.getenv("SUPABASE_KEY", "")

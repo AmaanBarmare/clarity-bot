@@ -1,39 +1,64 @@
 import asyncio
 import json
+import os
+import sys
+import time
 import uuid
+from pathlib import Path
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
+_backend_dir = Path(__file__).resolve().parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
+
+import database
+from agent import run_pipeline
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-import database
-from queue_manager import queue_manager
-from agent import run_pipeline
 
+def _allowed_origins() -> list[str]:
+    raw = os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    )
+    out = [x.strip() for x in raw.split(",") if x.strip()]
+    if vercel_url := os.getenv("VERCEL_URL"):
+        out.append(f"https://{vercel_url}")
+    if branch_url := os.getenv("VERCEL_BRANCH_URL"):
+        out.append(f"https://{branch_url}")
+    return list(dict.fromkeys(out))
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_PUBLIC_DIR = _REPO_ROOT / "public"
 
 app = FastAPI(title="ClarityBot API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+api = APIRouter(prefix="/api")
 
 
 class ClaimRequest(BaseModel):
     claim: str
 
 
-@app.get("/health")
+@api.get("/health")
 async def health():
     return {"status": "ok"}
 
 
-@app.post("/check")
-async def check_claim(req: ClaimRequest, background_tasks: BackgroundTasks):
+@api.post("/check")
+async def check_claim(req: ClaimRequest):
     claim = req.claim.strip()
     if not claim:
         raise HTTPException(status_code=400, detail="Claim cannot be empty")
@@ -43,20 +68,28 @@ async def check_claim(req: ClaimRequest, background_tasks: BackgroundTasks):
     claim_id = str(uuid.uuid4())
     await database.insert_claim(claim_id, claim)
 
-    queue_manager.create(claim_id)
-
-    background_tasks.add_task(run_pipeline, claim, claim_id)
-
-    return {"claim_id": claim_id, "status": "processing"}
+    return {"claim_id": claim_id, "status": "pending"}
 
 
-@app.get("/results")
+@api.post("/execute/{claim_id}")
+async def execute_pipeline(claim_id: str):
+    row = await database.get_claim(claim_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    text = row.get("text") or ""
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Claim text missing")
+    await run_pipeline(text, claim_id)
+    return {"claim_id": claim_id, "status": "done"}
+
+
+@api.get("/results")
 async def get_results():
     claims = await database.get_all_claims()
     return claims
 
 
-@app.get("/results/{claim_id}")
+@api.get("/results/{claim_id}")
 async def get_result(claim_id: str):
     claim = await database.get_claim(claim_id)
     if claim is None:
@@ -64,20 +97,28 @@ async def get_result(claim_id: str):
     return claim
 
 
-@app.get("/trends")
+@api.get("/trends")
 async def get_trends():
     trends = await database.get_trends()
     return trends
 
 
-@app.get("/logs/stream")
-async def stream_logs(request: Request, claim_id: str):
-    q = queue_manager.get(claim_id)
+STREAM_MAX_SECONDS = 900.0
+STREAM_POLL_INTERVAL = 0.45
 
+
+@api.get("/logs/stream")
+async def stream_logs(request: Request, claim_id: str):
     async def event_generator():
-        if q is None:
-            historical = await database.get_logs(claim_id)
-            for log in historical:
+        seen = 0
+        last_heartbeat = time.monotonic()
+        started = time.monotonic()
+        while time.monotonic() - started < STREAM_MAX_SECONDS:
+            if await request.is_disconnected():
+                break
+
+            logs = await database.get_logs(claim_id)
+            for log in logs[seen:]:
                 yield {
                     "event": "log",
                     "data": json.dumps({
@@ -87,32 +128,33 @@ async def stream_logs(request: Request, claim_id: str):
                         "ts": log["ts"],
                     }),
                 }
-            return
+                seen += 1
+                if log["step"] == "error" or (
+                    log["step"] == "emitter" and log["status"] == "done"
+                ):
+                    return
 
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    event = await asyncio.wait_for(q.get(), timeout=30.0)
-                except asyncio.TimeoutError:
-                    yield {"event": "heartbeat", "data": json.dumps({"status": "heartbeat"})}
-                    continue
+            claim = await database.get_claim(claim_id)
+            if claim is not None and claim.get("score") is not None:
+                return
 
-                if event is None:
-                    break
+            now = time.monotonic()
+            if now - last_heartbeat >= 25.0:
+                yield {"event": "heartbeat", "data": json.dumps({"status": "heartbeat"})}
+                last_heartbeat = now
 
-                yield {"event": "log", "data": json.dumps(event)}
-        finally:
-            queue_manager.cleanup(claim_id)
+            await asyncio.sleep(STREAM_POLL_INTERVAL)
 
     return EventSourceResponse(event_generator())
 
 
-@app.get("/logs/{claim_id}")
+@api.get("/logs/{claim_id}")
 async def get_logs(claim_id: str):
     logs = await database.get_logs(claim_id)
     return logs
+
+
+app.include_router(api)
 
 
 @app.on_event("startup")
@@ -122,3 +164,7 @@ async def startup():
         print("Supabase connection verified")
     except Exception as e:
         print(f"WARNING: Supabase connection failed: {e}")
+
+
+if _PUBLIC_DIR.is_dir() and any(_PUBLIC_DIR.iterdir()):
+    app.mount("/", StaticFiles(directory=str(_PUBLIC_DIR), html=True), name="static")
