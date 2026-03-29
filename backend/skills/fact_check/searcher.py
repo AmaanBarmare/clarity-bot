@@ -24,7 +24,7 @@ async def search(assertions: list[str], log_cb) -> dict:
                         "X-API-KEY": api_key,
                         "Content-Type": "application/json",
                     },
-                    json={"q": assertion, "num": 3},
+                    json={"q": assertion, "num": 5},
                     timeout=15.0,
                 )
                 res.raise_for_status()

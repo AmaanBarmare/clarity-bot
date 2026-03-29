@@ -163,6 +163,20 @@ async def get_logs(claim_id: str):
 app.include_router(api)
 
 
+@app.get("/")
+async def root():
+    for candidate in [
+        _backend_dir / "static" / "index.html",
+        _PUBLIC_DIR / "index.html",
+        Path("/vercel/path0/public/index.html"),
+        _REPO_ROOT / "public" / "index.html",
+    ]:
+        if candidate.is_file():
+            return FileResponse(str(candidate), media_type="text/html")
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse("<h1>ClarityBot</h1>", status_code=200)
+
+
 @app.on_event("startup")
 async def startup():
     try:

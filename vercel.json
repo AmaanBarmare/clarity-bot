@@ -4,9 +4,6 @@
   "installCommand": "pip install -r requirements.txt",
   "buildCommand": "echo 'public already built'",
   "regions": ["iad1"],
-  "redirects": [
-    { "source": "/", "destination": "/index.html", "permanent": false }
-  ],
   "rewrites": [
     {
       "source": "/((?!api/).*)",

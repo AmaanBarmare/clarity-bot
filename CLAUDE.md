@@ -322,12 +322,23 @@ How it works:
   and a `credibility_note` string used in the Gemini scoring prompt
 
 Credibility levels:
-  high:   primary authority (nasa.gov, cdc.gov, who.int), dedicated
-          fact-checker (snopes.com, factcheck.org), or major wire
-          service (reuters.com, apnews.com)
+  high:   primary authority (nasa.gov, cdc.gov, who.int, nejm.org),
+          dedicated fact-checker (snopes.com, factcheck.org), or major
+          wire service (reuters.com, apnews.com)
   medium: .gov or .edu domain not in the primary list, or secondary
-          sources like wikipedia.org, healthline.com
-  low:    domain not in the trusted list and not .gov/.edu
+          sources like mayoclinic.org, space.com, bbc.com
+  low:    domain not in the trusted list and not .gov/.edu, OR any
+          domain on the LOW_CREDIBILITY_DOMAINS blocklist
+
+Explicitly blocked (always LOW regardless of other rules):
+  reddit.com, facebook.com, twitter.com/x.com, youtube.com,
+  tiktok.com, instagram.com, quora.com, medium.com,
+  wikipedia.org, wikihow.com, blogspot.com, wordpress.com
+
+agent.py calls filter_credible_sources() after the search step to
+remove low-credibility sources before crossref and scoring. If ALL
+sources are low-credibility, they are kept but labelled LOW so the
+score is capped at 4 / UNVERIFIED.
 
 Score adjustments in scorer.py:
 - Primary authority found (nasa.gov, cdc.gov, etc.): no cap

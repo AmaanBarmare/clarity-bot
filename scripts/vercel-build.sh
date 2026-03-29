@@ -10,6 +10,9 @@ rm -rf public
 mkdir -p public
 cp -r frontend/dist/* public/
 
+mkdir -p backend/static
+cp frontend/dist/index.html backend/static/index.html
+
 # Ensure Vercel output static directory exists and has the built frontend
 if [ -d "$ROOT/.vercel/output" ]; then
   mkdir -p "$ROOT/.vercel/output/static"

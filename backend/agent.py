@@ -4,6 +4,7 @@ from skills.fact_check.searcher import search
 from skills.fact_check.crossref import crossref
 from skills.fact_check.scorer import score
 from skills.fact_check.emitter import emit
+from skills.fact_check.source_credibility import filter_credible_sources
 
 
 async def run_pipeline(claim: str, claim_id: str) -> None:
@@ -33,16 +34,29 @@ async def run_pipeline(claim: str, claim_id: str) -> None:
 
         result2 = await search(result1["assertions"], log_cb)
 
-        result3 = await crossref(claim, result2["sources"], log_cb)
+        credible_sources = filter_credible_sources(result2["sources"])
+        all_sources = result2["sources"]
+
+        if len(credible_sources) < len(all_sources):
+            dropped = len(all_sources) - len(credible_sources)
+            await log_cb(
+                "searcher",
+                "done",
+                f"Filtered out {dropped} low-credibility source(s) "
+                f"(social media, user-generated content). "
+                f"Using {len(credible_sources)} credible source(s).",
+            )
+
+        result3 = await crossref(claim, credible_sources, log_cb)
 
         result4 = await score(
             result3["support_level"],
             result3["analysis"],
-            result2["sources"],
+            credible_sources,
             log_cb,
         )
 
-        await emit(claim_id, claim, result4, result2["sources"], log_cb)
+        await emit(claim_id, claim, result4, credible_sources, log_cb)
 
     except Exception as e:
         await log_cb("error", "error", str(e))

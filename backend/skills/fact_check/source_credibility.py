@@ -1,38 +1,63 @@
 from urllib.parse import urlparse
 
 TRUSTED_SOURCES: dict[str, tuple[str, str]] = {
-    # Space / NASA — primary authorities
+    # ── Space ──────────────────────────────────────────────
     "nasa.gov": ("high", "space"),
     "science.nasa.gov": ("high", "space"),
     "jpl.nasa.gov": ("high", "space"),
     "esa.int": ("high", "space"),
+    "jaxa.jp": ("high", "space"),
+    "isro.gov.in": ("high", "space"),
     "spacex.com": ("medium", "space"),
     "space.com": ("medium", "space"),
+    "planetary.org": ("medium", "space"),
+    "astronomy.com": ("medium", "space"),
+    "skyandtelescope.org": ("medium", "space"),
+    "universetoday.com": ("medium", "space"),
 
-    # Vaccines / Health — primary authorities
+    # ── Health ─────────────────────────────────────────────
     "cdc.gov": ("high", "health"),
     "who.int": ("high", "health"),
     "nih.gov": ("high", "health"),
     "fda.gov": ("high", "health"),
     "pubmed.ncbi.nlm.nih.gov": ("high", "health"),
-    "mayoclinic.org": ("medium", "health"),
-    "healthline.com": ("medium", "health"),
-    "webmd.com": ("medium", "health"),
     "medlineplus.gov": ("high", "health"),
+    "clinicaltrials.gov": ("high", "health"),
+    "thelancet.com": ("high", "health"),
+    "nejm.org": ("high", "health"),
+    "bmj.com": ("high", "health"),
+    "mayoclinic.org": ("medium", "health"),
+    "clevelandclinic.org": ("medium", "health"),
+    "hopkinsmedicine.org": ("medium", "health"),
+    "health.harvard.edu": ("medium", "health"),
 
-    # Historical facts — primary authorities
+    # ── History ────────────────────────────────────────────
     "archives.gov": ("high", "history"),
     "loc.gov": ("high", "history"),
-    "history.com": ("medium", "history"),
+    "si.edu": ("high", "history"),
+    "nps.gov": ("high", "history"),
     "britannica.com": ("medium", "history"),
     "smithsonianmag.com": ("medium", "history"),
+    "history.com": ("medium", "history"),
+    "worldhistory.org": ("medium", "history"),
 
-    # Cross-topic fact-checkers
+    # ── Science / Technology ───────────────────────────────
+    "nature.com": ("high", "general"),
+    "sciencedirect.com": ("high", "general"),
+    "science.org": ("high", "general"),
+    "pnas.org": ("high", "general"),
+    "arxiv.org": ("medium", "general"),
+    "newscientist.com": ("medium", "general"),
+    "scientificamerican.com": ("medium", "general"),
+    "livescience.com": ("medium", "general"),
+
+    # ── Fact-checkers ──────────────────────────────────────
     "snopes.com": ("high", "general"),
     "factcheck.org": ("high", "general"),
     "politifact.com": ("high", "general"),
+    "fullfact.org": ("high", "general"),
 
-    # Wire services / major outlets
+    # ── Wire services / major journalism ───────────────────
     "reuters.com": ("high", "general"),
     "apnews.com": ("high", "general"),
     "bbc.com": ("medium", "general"),
@@ -40,21 +65,30 @@ TRUSTED_SOURCES: dict[str, tuple[str, str]] = {
     "nytimes.com": ("medium", "general"),
     "washingtonpost.com": ("medium", "general"),
     "theguardian.com": ("medium", "general"),
-    "nature.com": ("high", "general"),
-    "sciencedirect.com": ("high", "general"),
-
-    # Reference
-    "wikipedia.org": ("medium", "general"),
-    "en.wikipedia.org": ("medium", "general"),
+    "npr.org": ("medium", "general"),
+    "pbs.org": ("medium", "general"),
 }
 
 PRIMARY_AUTHORITIES = {
     "nasa.gov", "science.nasa.gov", "jpl.nasa.gov", "esa.int",
+    "jaxa.jp", "isro.gov.in",
     "cdc.gov", "who.int", "nih.gov", "fda.gov", "pubmed.ncbi.nlm.nih.gov",
-    "medlineplus.gov", "archives.gov", "loc.gov",
-    "snopes.com", "factcheck.org", "politifact.com",
+    "medlineplus.gov", "clinicaltrials.gov",
+    "thelancet.com", "nejm.org", "bmj.com",
+    "archives.gov", "loc.gov", "si.edu", "nps.gov",
+    "snopes.com", "factcheck.org", "politifact.com", "fullfact.org",
     "reuters.com", "apnews.com",
-    "nature.com", "sciencedirect.com",
+    "nature.com", "sciencedirect.com", "science.org", "pnas.org",
+}
+
+LOW_CREDIBILITY_DOMAINS = {
+    "reddit.com", "facebook.com", "twitter.com", "x.com",
+    "tiktok.com", "instagram.com", "youtube.com", "youtu.be",
+    "quora.com", "medium.com", "tumblr.com", "pinterest.com",
+    "linkedin.com", "threads.net",
+    "wikipedia.org", "en.wikipedia.org",
+    "wikihow.com", "answers.yahoo.com",
+    "blogspot.com", "wordpress.com",
 }
 
 
@@ -74,6 +108,11 @@ def get_credibility(url: str) -> tuple[str, str]:
     if not domain:
         return ("low", "unknown")
 
+    if domain in LOW_CREDIBILITY_DOMAINS or any(
+        domain.endswith(f".{blocked}") for blocked in LOW_CREDIBILITY_DOMAINS
+    ):
+        return ("low", "unknown")
+
     if domain in TRUSTED_SOURCES:
         return TRUSTED_SOURCES[domain]
 
@@ -87,6 +126,17 @@ def get_credibility(url: str) -> tuple[str, str]:
         return ("medium", "general")
 
     return ("low", "unknown")
+
+
+def filter_credible_sources(sources: list[dict]) -> list[dict]:
+    """Keep only high and medium credibility sources.
+    If none survive, return all sources so the pipeline can still run
+    (they'll be labelled LOW in the prompt and score will be capped)."""
+    credible = [
+        src for src in sources
+        if get_credibility(src.get("url", ""))[0] in ("high", "medium")
+    ]
+    return credible if credible else sources
 
 
 def summarize_source_credibility(sources: list[dict]) -> dict:
