@@ -59,7 +59,7 @@ claritybot/
 │   │   └── fact_check/
 │   │       ├── __init__.py
 │   │       ├── extractor.py    Step 1: extract verifiable assertions
-│   │       ├── searcher.py     Step 2: Google Custom Search
+│   │       ├── searcher.py     Step 2: Serper web search (Google results)
 │   │       ├── crossref.py     Step 3: Gemini cross-reference (with credibility labels)
 │   │       ├── scorer.py       Step 4: score 1–10 + verdict label (with source quality caps)
 │   │       ├── emitter.py      Step 5: write Supabase + close SSE queue
@@ -106,8 +106,7 @@ Always use `os.getenv()` in Python. Never commit `.env`.
 
 ```
 GEMINI_API_KEY=
-SEARCH_API_KEY=
-SEARCH_ENGINE_ID=
+SERPER_API_KEY=
 NVIDIA_API_KEY=
 SUPABASE_URL=
 SUPABASE_KEY=
@@ -127,8 +126,9 @@ SUPABASE_KEY=
 | `database.py` | Every Supabase read/write — no DB calls anywhere else |
 | `agent.py` | Calls skills in order, catches exceptions, closes queue |
 | `queue_manager.py` | SSE asyncio.Queue per claim — create, push, close, cleanup |
+| `skills/fact_check/gemini.py` | Shared Gemini helper — retry with backoff, strip markdown fences |
 | `skills/fact_check/extractor.py` | Parse claim into verifiable assertions via Gemini |
-| `skills/fact_check/searcher.py` | Google Custom Search — 3 assertions x 3 results |
+| `skills/fact_check/searcher.py` | Serper web search (Google results) — 3 assertions x 3 results |
 | `skills/fact_check/crossref.py` | Gemini compares sources vs claim (with credibility labels) |
 | `skills/fact_check/scorer.py` | Map support_level to score 1–10 + verdict label (with source quality caps) |
 | `skills/fact_check/emitter.py` | Write Supabase, upsert trends, push done event |
@@ -193,24 +193,22 @@ regardless of success or failure. None is the sentinel that terminates the strea
 
 ### Gemini API calls
 
-Use the REST endpoint directly via httpx — not the Python SDK:
+All Gemini calls go through the shared helper in
+`skills/fact_check/gemini.py` which handles retries with exponential
+backoff for 429 rate limits and strips markdown fences automatically.
+
+Model: `gemini-2.5-flash` via the REST endpoint (not the Python SDK):
 
 ```python
-async with httpx.AsyncClient() as client:
-    res = await client.post(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
-        params={"key": os.getenv("GEMINI_API_KEY")},
-        json={"contents": [{"parts": [{"text": prompt}]}]},
-        timeout=30.0
-    )
-text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
+from .gemini import call_gemini
+
+text = await call_gemini(prompt)
+data = json.loads(text)
 ```
 
-Always strip markdown fences before parsing Gemini JSON responses:
-
-```python
-text = text.strip().strip("```json").strip("```").strip()
-data = json.loads(text)
+The helper uses this URL pattern:
+```
+https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
 ```
 
 ### Error handling
@@ -379,8 +377,7 @@ released March 16 2026. The policy file is nemoclaw/openclaw-sandbox.yaml.
 
 Allowlisted hosts (deny everything else by default):
   generativelanguage.googleapis.com
-  customsearch.googleapis.com
-  www.googleapis.com
+  google.serper.dev
   build.nvidia.com
 
 To start the sandbox: bash nemoclaw/setup.sh
@@ -388,6 +385,10 @@ To start the sandbox: bash nemoclaw/setup.sh
 The sandbox is the security story for judges. Frame it as:
 "Every network call the agent makes is governed by an OpenShell policy.
 A prompt injection attack cannot exfiltrate data to unauthorized endpoints."
+
+Note: The search provider was changed from Google Custom Search JSON API
+(which was discontinued for new customers) to Serper.dev, which returns
+Google search results via a simple REST API.
 
 ---
 

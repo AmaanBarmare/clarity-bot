@@ -12,7 +12,7 @@
 | Agent framework | OpenClaw inside NemoClaw | Custom skills, sandboxed, prize-winning |
 | Inference | Nemotron 3 Super 120B | Via NemoClaw routing (build.nvidia.com) |
 | LLM calls | Gemini API | Claim analysis + cross-referencing |
-| Web search | Google Custom Search API | Source retrieval per assertion |
+| Web search | Serper.dev (Google results) | Source retrieval per assertion |
 | Database | Supabase (hosted Postgres) | Visual dashboard, zero local setup |
 | Realtime | Server-Sent Events (SSE) | Log streaming, no WebSocket needed |
 | Security | NemoClaw + OpenShell | Deny-all sandbox, policy-governed egress |
@@ -55,7 +55,7 @@ claritybot/
 │   │   └── fact_check/
 │   │       ├── __init__.py
 │   │       ├── extractor.py       ← Step 1: parse assertions
-│   │       ├── searcher.py        ← Step 2: Google Custom Search
+│   │       ├── searcher.py        ← Step 2: Serper web search (Google results)
 │   │       ├── crossref.py        ← Step 3: Gemini cross-reference (with credibility labels)
 │   │       ├── scorer.py          ← Step 4: score + verdict (with source quality caps)
 │   │       ├── emitter.py         ← Step 5: write Supabase + push SSE
@@ -85,8 +85,7 @@ Do all of this before opening your terminal.
 | Key | URL | Free tier |
 |-----|-----|-----------|
 | Gemini API key | aistudio.google.com → Get API Key | 1M tokens/day |
-| Google Custom Search key | console.cloud.google.com → APIs → Custom Search JSON API | 100/day |
-| Google Search Engine ID | programmablesearchengine.google.com → New engine → Any URL → get CX id | Free |
+| Serper API key | serper.dev → sign up free → copy API key from dashboard | 2500 free queries |
 | NVIDIA Nemotron key | build.nvidia.com → Get API Key | Free credits |
 
 ### Set up Supabase (5 mins)
@@ -184,16 +183,14 @@ requirements.txt:
 
 .env (gitignored):
   GEMINI_API_KEY=your_key_here
-  SEARCH_API_KEY=your_key_here
-  SEARCH_ENGINE_ID=your_id_here
+  SERPER_API_KEY=your_key_here
   NVIDIA_API_KEY=your_key_here
   SUPABASE_URL=your_url_here
   SUPABASE_KEY=your_anon_key_here
 
 .env.example (committed):
   GEMINI_API_KEY=
-  SEARCH_API_KEY=
-  SEARCH_ENGINE_ID=
+  SERPER_API_KEY=
   NVIDIA_API_KEY=
   SUPABASE_URL=
   SUPABASE_KEY=
@@ -359,7 +356,7 @@ Respond ONLY with valid JSON, no markdown:
 
     async with httpx.AsyncClient() as client:
         res = await client.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
             params={"key": os.getenv("GEMINI_API_KEY")},
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=30.0
@@ -378,6 +375,8 @@ Respond ONLY with valid JSON, no markdown:
 
 import httpx, os
 
+SERPER_URL = "https://google.serper.dev/search"
+
 async def search(assertions: list, log_cb) -> dict:
     await log_cb("searcher", "running", "Searching primary sources...")
     
@@ -386,17 +385,17 @@ async def search(assertions: list, log_cb) -> dict:
     
     async with httpx.AsyncClient() as client:
         for assertion in assertions[:3]:  # max 3 to save API quota
-            res = await client.get(
-                "https://www.googleapis.com/customsearch/v1",
-                params={
-                    "key": os.getenv("SEARCH_API_KEY"),
-                    "cx": os.getenv("SEARCH_ENGINE_ID"),
-                    "q": assertion,
-                    "num": 3
+            res = await client.post(
+                SERPER_URL,
+                headers={
+                    "X-API-KEY": os.getenv("SERPER_API_KEY"),
+                    "Content-Type": "application/json",
                 },
-                timeout=30.0
+                json={"q": assertion, "num": 3},
+                timeout=15.0,
             )
-            items = res.json().get("items", [])
+            res.raise_for_status()
+            items = res.json().get("organic", [])
             for item in items:
                 url = item.get("link", "")
                 if url not in seen_urls:
@@ -446,7 +445,7 @@ Respond ONLY with valid JSON, no markdown:
 
     async with httpx.AsyncClient() as client:
         res = await client.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
             params={"key": os.getenv("GEMINI_API_KEY")},
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=30.0
@@ -505,7 +504,7 @@ Respond ONLY with valid JSON, no markdown:
 
     async with httpx.AsyncClient() as client:
         res = await client.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
             params={"key": os.getenv("GEMINI_API_KEY")},
             json={"contents": [{"parts": [{"text": prompt}]}]},
             timeout=30.0
@@ -1144,8 +1143,7 @@ For each:
 
 Allowlist only these hosts (deny everything else):
   - generativelanguage.googleapis.com
-  - customsearch.googleapis.com
-  - www.googleapis.com
+  - google.serper.dev
   - build.nvidia.com
 
 ─── Also create nemoclaw/setup.sh ───
@@ -1219,7 +1217,8 @@ HOW WE BUILT IT
   with deny-all network policy via OpenShell
 - OpenClaw: agent framework with 5 custom TypeScript skills
 - Nemotron 3 Super 120B: inference provider via build.nvidia.com
-- Gemini API: claim extraction and cross-referencing
+- Gemini 2.5 Flash: claim extraction and cross-referencing
+- Serper.dev: Google search results for source retrieval
 - FastAPI (Python): REST backend + Server-Sent Events for live log streaming
 - React + Vite + TypeScript + Tailwind: custom frontend
 - Supabase: hosted Postgres for claims, logs, and trend data
@@ -1277,7 +1276,7 @@ React, Vite, TypeScript, TailwindCSS, Supabase, Server-Sent Events, Python
             Full observability for free."
 
 4:30–5:00  "NemoClaw runs the agent in a sandboxed container —
-            deny-all egress, only Gemini and Google Search allowed.
+            deny-all egress, only Gemini and Serper allowed.
             Built solo in 24 hours. Thank you."
 ```
 

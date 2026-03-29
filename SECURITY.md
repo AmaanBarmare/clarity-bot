@@ -13,7 +13,7 @@ API key handling, input validation, and the security story for judges.
 | Asset | Sensitivity | Why it matters |
 |-------|-------------|----------------|
 | Gemini API key | Critical | Billing abuse if leaked |
-| Google Custom Search key | High | Quota abuse |
+| Serper API key | High | Quota abuse |
 | NVIDIA API key | High | Billing abuse |
 | Supabase anon key | Medium | Public read/write to DB tables |
 | Claim text submitted by users | Low | No PII — public claims only |
@@ -67,8 +67,7 @@ are explicitly allowlisted:
 
 ```
 generativelanguage.googleapis.com   # Gemini API
-customsearch.googleapis.com          # Google Custom Search
-www.googleapis.com                   # Google APIs (auth)
+google.serper.dev                    # Serper web search (Google results)
 build.nvidia.com                     # Nemotron inference
 ```
 
@@ -217,7 +216,7 @@ During the 3-minute judge pitch, the NemoClaw sandbox is demonstrated
 as follows:
 
 1. Show the network policy file briefly:
-   "The agent can only reach Gemini, Google Search, and NVIDIA.
+   "The agent can only reach Gemini, Serper (Google search), and NVIDIA.
     Everything else is denied at the OS level."
 
 2. Submit a normal claim and show it working.

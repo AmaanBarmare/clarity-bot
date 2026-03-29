@@ -54,16 +54,14 @@ Create backend/requirements.txt with:
 
 Create backend/.env (gitignored):
   GEMINI_API_KEY=your_key_here
-  SEARCH_API_KEY=your_key_here
-  SEARCH_ENGINE_ID=your_id_here
+  SERPER_API_KEY=your_key_here
   NVIDIA_API_KEY=your_key_here
   SUPABASE_URL=your_url_here
   SUPABASE_KEY=your_anon_key_here
 
 Create backend/.env.example (committed, all values empty):
   GEMINI_API_KEY=
-  SEARCH_API_KEY=
-  SEARCH_ENGINE_ID=
+  SERPER_API_KEY=
   NVIDIA_API_KEY=
   SUPABASE_URL=
   SUPABASE_KEY=
@@ -255,8 +253,10 @@ async def search(assertions: list, log_cb) -> dict:
     await log_cb("searcher", "running", "Searching primary sources...")
 
     For each assertion (max 3):
-      GET https://www.googleapis.com/customsearch/v1
-        params: key, cx, q=assertion, num=3
+      POST https://google.serper.dev/search
+        headers: X-API-KEY, Content-Type: application/json
+        body: {"q": assertion, "num": 3}
+    Parse results from response.organic[] array.
     Deduplicate results by URL.
     Collect: [{title, url, snippet}]
 
@@ -777,8 +777,7 @@ Create backend/test_pipeline.py:
 Create nemoclaw/openclaw-sandbox.yaml:
   Allowlist only:
     generativelanguage.googleapis.com
-    customsearch.googleapis.com
-    www.googleapis.com
+    google.serper.dev
     build.nvidia.com
   Deny all other egress.
 

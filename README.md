@@ -40,7 +40,7 @@ structured 5-step pipeline where each step does something distinct:
 ```
 ① Extract       Break the claim into specific, checkable assertions
       ↓
-② Search        Find 3–5 primary sources via Google Custom Search
+② Search        Find 3–5 primary sources via Serper (Google results)
       ↓
 ③ Cross-reference   Ask the AI: does the evidence support the claim?
       ↓
@@ -72,7 +72,7 @@ This is the security layer — and the part that took the most research.
 The AI agent runs inside a NemoClaw sandbox, which is NVIDIA's open-source
 security runtime for AI agents, released on March 16, 2026 — 12 days
 before this hackathon. The sandbox enforces a network policy at the
-operating system level: the agent can only reach Gemini, Google Search,
+operating system level: the agent can only reach Gemini, Serper (Google search),
 and NVIDIA's inference endpoint. Everything else is blocked.
 
 Why does this matter? A common attack against AI agents is "prompt injection"
@@ -120,8 +120,8 @@ handles one request at a time and one that handles concurrent requests properly.
 | Agent framework | OpenClaw | Modular skill-based AI agent |
 | Security sandbox | NemoClaw (NVIDIA) | Network policy enforcement |
 | LLM inference | Nemotron 3 Super 120B | Runs via NVIDIA cloud |
-| Claim analysis | Gemini API (Google) | Assertion extraction + cross-referencing |
-| Web search | Google Custom Search | Primary source retrieval |
+| Claim analysis | Gemini 2.5 Flash (Google) | Assertion extraction + cross-referencing |
+| Web search | Serper.dev (Google results) | Primary source retrieval |
 | Database | Supabase (Postgres) | Stores claims, logs, trends |
 | Realtime | Server-Sent Events | Live log streaming to frontend |
 
@@ -150,7 +150,7 @@ handles one request at a time and one that handles concurrent requests properly.
 ┌─────────────────────────────────────────────────────┐
 │       NemoClaw Sandbox (NVIDIA OpenShell)           │
 │                                                     │
-│  Network policy: deny all except Gemini + Search    │
+│  Network policy: deny all except Gemini + Serper     │
 │  Filesystem: isolated to /sandbox only              │
 └──────────────────────┬──────────────────────────────┘
                        │
@@ -220,7 +220,7 @@ claritybot/
 | Key | Where to get it |
 |-----|----------------|
 | Gemini API | aistudio.google.com |
-| Google Custom Search | console.cloud.google.com |
+| Serper API | serper.dev (2500 free queries) |
 | NVIDIA Nemotron | build.nvidia.com |
 | Supabase URL + key | supabase.com |
 
@@ -274,9 +274,9 @@ Gemini reads the claim and identifies the core checkable assertion:
 It classifies this as a factual claim (not an opinion or satire).
 
 **Step 2 — Search**
-The backend queries Google Custom Search for 3 sources about this
-specific assertion. It collects titles, URLs, and snippet text from
-NASA, Snopes, and a BBC article.
+The backend queries Serper.dev (which returns Google search results) for
+3 sources about this specific assertion. It collects titles, URLs, and
+snippet text from NASA, Snopes, and a BBC article.
 
 **Step 3 — Cross-reference**
 Each source is labeled with its credibility level (HIGH, MEDIUM, or LOW)

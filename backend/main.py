@@ -73,10 +73,22 @@ async def get_trends():
 @app.get("/logs/stream")
 async def stream_logs(request: Request, claim_id: str):
     q = queue_manager.get(claim_id)
-    if q is None:
-        raise HTTPException(status_code=404, detail="No active stream for this claim")
 
     async def event_generator():
+        if q is None:
+            historical = await database.get_logs(claim_id)
+            for log in historical:
+                yield {
+                    "event": "log",
+                    "data": json.dumps({
+                        "step": log["step"],
+                        "status": log["status"],
+                        "message": log["message"],
+                        "ts": log["ts"],
+                    }),
+                }
+            return
+
         try:
             while True:
                 if await request.is_disconnected():
@@ -95,6 +107,12 @@ async def stream_logs(request: Request, claim_id: str):
             queue_manager.cleanup(claim_id)
 
     return EventSourceResponse(event_generator())
+
+
+@app.get("/logs/{claim_id}")
+async def get_logs(claim_id: str):
+    logs = await database.get_logs(claim_id)
+    return logs
 
 
 @app.on_event("startup")

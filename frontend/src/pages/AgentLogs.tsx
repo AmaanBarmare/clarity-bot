@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { LogEvent } from "../api/client";
 import LogLine from "../components/LogLine";
@@ -9,9 +9,10 @@ export default function AgentLogs() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
 
-  const startStream = useCallback((claimId: string) => {
-    esRef.current?.close();
-    setLogs([]);
+  useEffect(() => {
+    const claimId = localStorage.getItem("lastClaimId");
+    if (!claimId) return;
+
     setActive(true);
 
     const es = api.streamLogs(
@@ -24,25 +25,15 @@ export default function AgentLogs() {
       }
     );
     esRef.current = es;
-  }, []);
 
-  useEffect(() => {
-    const claimId = localStorage.getItem("lastClaimId");
-    if (claimId) {
-      startStream(claimId);
-    }
     return () => {
       esRef.current?.close();
     };
-  }, [startStream]);
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs.length]);
-
-  const handleClear = () => {
-    setLogs([]);
-  };
 
   return (
     <div className="max-w-3xl mx-auto pt-12 px-4">
@@ -59,7 +50,7 @@ export default function AgentLogs() {
           </span>
           <button
             className="text-gray-500 hover:text-white text-xs transition-colors"
-            onClick={handleClear}
+            onClick={() => setLogs([])}
           >
             Clear
           </button>

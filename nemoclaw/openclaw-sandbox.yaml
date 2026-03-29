@@ -1,0 +1,44 @@
+# ClarityBot — NemoClaw OpenShell Sandbox Policy
+#
+# Default-deny egress: the agent cannot reach any endpoint
+# not explicitly listed below. This is enforced at the OS level
+# (Landlock + seccomp + network namespace isolation), so even a
+# successful prompt injection cannot exfiltrate data.
+
+sandbox:
+  name: claritybot-sandbox
+  version: "1.0"
+
+network:
+  default: deny
+
+  egress:
+    allow:
+      # Gemini 2.5 Flash — all LLM inference calls
+      - host: generativelanguage.googleapis.com
+        ports: [443]
+        protocol: https
+
+      # Serper.dev — Google search results for source retrieval
+      - host: google.serper.dev
+        ports: [443]
+        protocol: https
+
+      # NVIDIA Build — Nemotron inference (reserved)
+      - host: build.nvidia.com
+        ports: [443]
+        protocol: https
+
+filesystem:
+  # Allow read access to the backend working directory
+  read:
+    - /app/backend/**
+  # Allow write only to logs and temp files
+  write:
+    - /tmp/**
+
+process:
+  # No shell spawning or subprocess execution
+  allow_exec: false
+  # No raw socket creation
+  allow_raw_sockets: false

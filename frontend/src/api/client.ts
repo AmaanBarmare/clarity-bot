@@ -65,6 +65,16 @@ export const api = {
     }
   },
 
+  async getLogs(claimId: string): Promise<LogEvent[]> {
+    try {
+      const res = await fetch(`${BASE}/logs/${claimId}`);
+      if (!res.ok) return [];
+      return res.json();
+    } catch {
+      return [];
+    }
+  },
+
   streamLogs(
     claimId: string,
     onEvent: (event: LogEvent) => void,
