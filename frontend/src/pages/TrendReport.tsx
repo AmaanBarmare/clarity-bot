@@ -10,16 +10,16 @@ interface DonutSegment {
 }
 
 function DonutChart({ segments, total }: { segments: DonutSegment[]; total: number }) {
-  const cx = 100;
-  const cy = 100;
+  const cx = 110;
+  const cy = 110;
   const r = 80;
   const circumference = 2 * Math.PI * r;
   let cumulativeOffset = 0;
 
   return (
     <div className="flex flex-col items-center">
-      <svg viewBox="0 0 200 200" className="w-48 h-48">
-        {segments.map((seg) => {
+      <svg viewBox="0 0 220 220" className="w-48 h-48">
+        {segments.map((seg, i) => {
           const dash = (seg.pct / 100) * circumference;
           const gap = circumference - dash;
           const offset = -cumulativeOffset;
@@ -32,10 +32,14 @@ function DonutChart({ segments, total }: { segments: DonutSegment[]; total: numb
               r={r}
               fill="none"
               stroke={seg.color}
-              strokeWidth="24"
+              strokeWidth="18"
+              strokeLinecap="butt"
               strokeDasharray={`${dash} ${gap}`}
               strokeDashoffset={offset}
               transform={`rotate(-90 ${cx} ${cy})`}
+              style={{
+                animation: `fadeIn 400ms ease ${i * 100}ms both`,
+              }}
             />
           );
         })}
@@ -44,17 +48,17 @@ function DonutChart({ segments, total }: { segments: DonutSegment[]; total: numb
           y={cy}
           textAnchor="middle"
           dominantBaseline="central"
-          className="fill-white text-3xl font-bold"
-          style={{ fontSize: "36px" }}
+          className="fill-white font-bold font-mono"
+          style={{ fontSize: "28px" }}
         >
           {total}
         </text>
       </svg>
-      <div className="flex gap-4 mt-4 flex-wrap justify-center">
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-4 justify-center">
         {segments.map((seg) => (
-          <div key={seg.label} className="flex items-center gap-1.5 text-xs text-gray-400">
+          <div key={seg.label} className="flex items-center gap-1.5 text-xs font-mono text-[#8888aa]">
             <span
-              className="w-3 h-3 rounded-sm inline-block"
+              className="w-2 h-2 rounded-full inline-block"
               style={{ backgroundColor: seg.color }}
             />
             {seg.label} {seg.pct.toFixed(0)}%
@@ -82,10 +86,10 @@ function BarChart({ claims }: { claims: Claim[] }) {
   const maxCount = Math.max(...counts, 1);
   const barWidth = 36;
   const chartHeight = 120;
-  const gap = (400 - barWidth * 7) / 8;
+  const gap = (340 - barWidth * 7) / 8;
 
   return (
-    <svg viewBox="0 0 400 160" className="w-full max-w-md">
+    <svg viewBox="0 0 340 160" className="w-full">
       {counts.map((count, i) => {
         const barHeight = (count / maxCount) * chartHeight;
         const x = gap + i * (barWidth + gap);
@@ -97,15 +101,20 @@ function BarChart({ claims }: { claims: Claim[] }) {
               y={y}
               width={barWidth}
               height={barHeight}
-              rx={2}
-              fill="#10b981"
+              rx={4}
+              fill="#00ff88"
+              className="hover:fill-[#4ade80] transition-colors"
+              style={{
+                transformOrigin: `${x + barWidth / 2}px ${chartHeight}px`,
+                animation: `barGrow 400ms ease ${i * 50}ms both`,
+              }}
             />
             <text
               x={x + barWidth / 2}
               y={145}
               textAnchor="middle"
-              className="fill-gray-500"
-              style={{ fontSize: "10px" }}
+              fill="#555570"
+              style={{ fontSize: "10px", fontFamily: "'JetBrains Mono', monospace" }}
             >
               {days[i]}
             </text>
@@ -114,8 +123,8 @@ function BarChart({ claims }: { claims: Claim[] }) {
                 x={x + barWidth / 2}
                 y={y - 4}
                 textAnchor="middle"
-                className="fill-gray-400"
-                style={{ fontSize: "10px" }}
+                fill="#8888aa"
+                style={{ fontSize: "10px", fontFamily: "'JetBrains Mono', monospace" }}
               >
                 {count}
               </text>
@@ -128,9 +137,15 @@ function BarChart({ claims }: { claims: Claim[] }) {
 }
 
 function getScoreColor(score: number): string {
-  if (score <= 3) return "text-red-500";
-  if (score <= 6) return "text-amber-500";
-  return "text-green-500";
+  if (score < 4) return "#fca5a5";
+  if (score < 7) return "#fcd34d";
+  return "#86efac";
+}
+
+function getScoreGlow(score: number): string {
+  if (score < 4) return "0 0 12px rgba(239, 68, 68, 0.15)";
+  if (score < 7) return "0 0 12px rgba(245, 158, 11, 0.15)";
+  return "0 0 12px rgba(34, 197, 94, 0.15)";
 }
 
 function getMostCommonVerdict(claims: Claim[]): string | null {
@@ -150,21 +165,18 @@ export default function TrendReport() {
 
   useEffect(() => {
     Promise.all([api.getTrends(), api.getAllResults()])
-      .then(([t, c]) => {
-        setTrends(t);
-        setClaims(c);
-      })
+      .then(([t, c]) => { setTrends(t); setClaims(c); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) {
     return (
-      <div className="max-w-3xl mx-auto pt-12 px-4">
-        <h1 className="text-2xl font-bold text-white mb-6">Trend Report</h1>
+      <div className="max-w-3xl mx-auto pt-16 px-6">
+        <h1 className="text-3xl font-bold text-white mb-8">Trend Report</h1>
         <div className="space-y-4">
           {[1, 2, 3].map((n) => (
-            <div key={n} className="h-24 bg-gray-900 rounded-xl border border-gray-800 animate-pulse" />
+            <div key={n} className="h-24 rounded-xl border border-[#1e1e2e] shimmer" />
           ))}
         </div>
       </div>
@@ -173,9 +185,12 @@ export default function TrendReport() {
 
   if (claims.length === 0) {
     return (
-      <div className="max-w-3xl mx-auto pt-12 px-4">
-        <h1 className="text-2xl font-bold text-white mb-6">Trend Report</h1>
-        <p className="text-gray-500 text-center mt-16">Check some claims to see trends.</p>
+      <div className="max-w-3xl mx-auto pt-16 px-6">
+        <h1 className="text-3xl font-bold text-white mb-8">Trend Report</h1>
+        <div className="py-16 text-center">
+          <div className="text-5xl text-[#1e1e2e] mb-4">{"\u25ce"}</div>
+          <p className="font-mono text-sm text-[#555570]">Check some claims to see trends.</p>
+        </div>
       </div>
     );
   }
@@ -192,45 +207,54 @@ export default function TrendReport() {
   const segments: DonutSegment[] = [
     { label: "FALSE", pct: falsePct, color: "#ef4444" },
     { label: "MISLEADING", pct: misleadPct, color: "#f59e0b" },
-    { label: "UNVERIFIED", pct: unverifiedPct, color: "#6b7280" },
-    { label: "TRUE", pct: truePct, color: "#10b981" },
+    { label: "UNVERIFIED", pct: unverifiedPct, color: "#6366f1" },
+    { label: "TRUE", pct: truePct, color: "#22c55e" },
   ].filter((s) => s.pct > 0);
 
   return (
-    <div className="max-w-3xl mx-auto pt-12 px-4">
-      <h1 className="text-2xl font-bold text-white mb-6">Trend Report</h1>
+    <div className="max-w-3xl mx-auto pt-16 px-6">
+      <h1 className="text-3xl font-bold text-white mb-8">Trend Report</h1>
 
-      <div className="flex gap-4 mb-8">
-        <div className="flex-1 bg-gray-900 rounded-xl border border-gray-800 p-4">
-          <div className="text-2xl font-bold text-white">{total}</div>
-          <div className="text-xs text-gray-500 mt-1">claims checked</div>
+      {/* Stats row */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="bg-[#12121a] rounded-xl border border-[#1e1e2e] p-5">
+          <div className="text-4xl font-bold font-mono text-white">{total}</div>
+          <div className="text-[10px] uppercase tracking-[0.2em] font-mono text-[#555570] mt-2">
+            CLAIMS CHECKED
+          </div>
         </div>
-        <div className="flex-1 bg-gray-900 rounded-xl border border-gray-800 p-4">
-          <div className={`text-2xl font-bold ${getScoreColor(avgScore)}`}>
+        <div
+          className="bg-[#12121a] rounded-xl border border-[#1e1e2e] p-5"
+          style={{ boxShadow: getScoreGlow(avgScore) }}
+        >
+          <div className="text-4xl font-bold font-mono" style={{ color: getScoreColor(avgScore) }}>
             {avgScore.toFixed(1)}
           </div>
-          <div className="text-xs text-gray-500 mt-1">avg score</div>
-        </div>
-        <div className="flex-1 bg-gray-900 rounded-xl border border-gray-800 p-4">
-          <div className="mt-0.5">
-            <VerdictTag verdict={mostCommon} />
+          <div className="text-[10px] uppercase tracking-[0.2em] font-mono text-[#555570] mt-2">
+            AVG SCORE
           </div>
-          <div className="text-xs text-gray-500 mt-2">most common</div>
+        </div>
+        <div className="bg-[#12121a] rounded-xl border border-[#1e1e2e] p-5">
+          <VerdictTag verdict={mostCommon} />
+          <div className="text-[10px] uppercase tracking-[0.2em] font-mono text-[#555570] mt-3">
+            MOST COMMON
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Verdict Distribution</h2>
+      {/* Charts */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-[#12121a] rounded-xl border border-[#1e1e2e] p-6">
+          <h2 className="text-sm font-semibold text-[#f0f0ff] mb-5">Verdict Distribution</h2>
           {segments.length > 0 ? (
             <DonutChart segments={segments} total={total} />
           ) : (
-            <p className="text-gray-500 text-sm text-center py-8">No verdict data yet</p>
+            <p className="text-[#555570] text-sm text-center py-8">No verdict data yet</p>
           )}
         </div>
 
-        <div className="bg-gray-900 rounded-xl border border-gray-800 p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Claims per Day</h2>
+        <div className="bg-[#12121a] rounded-xl border border-[#1e1e2e] p-6">
+          <h2 className="text-sm font-semibold text-[#f0f0ff] mb-5">Claims per Day</h2>
           <div className="flex items-end justify-center min-h-[160px]">
             <BarChart claims={claims} />
           </div>

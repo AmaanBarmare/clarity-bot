@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { Search, Clock, BarChart2, Terminal } from "lucide-react";
 import StatusDot from "./StatusDot";
 
 interface SidebarProps {
@@ -6,43 +7,52 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS = [
-  { to: "/", label: "Check Claim", icon: "🔍" },
-  { to: "/history", label: "History", icon: "📋" },
-  { to: "/trends", label: "Trend Report", icon: "📊" },
-  { to: "/logs", label: "Agent Logs", icon: "⌨" },
+  { to: "/", label: "Check Claim", icon: Search },
+  { to: "/history", label: "History", icon: Clock },
+  { to: "/trends", label: "Trend Report", icon: BarChart2 },
+  { to: "/logs", label: "Agent Logs", icon: Terminal },
 ];
 
 export default function Sidebar({ online }: SidebarProps) {
   return (
-    <div className="fixed left-0 top-0 w-56 h-screen bg-gray-950 border-r border-gray-800 flex flex-col">
-      <div className="px-4 py-6">
-        <h1 className="font-mono text-lg font-bold text-green-400 tracking-tight">
+    <div className="fixed left-0 top-0 w-56 h-screen bg-[#0a0a0f] border-r border-[#1e1e2e] flex flex-col">
+      <div className="pt-6 px-5 pb-5 border-b border-[#1e1e2e]">
+        <h1 className="font-mono text-xl font-semibold text-[#00ff88]">
           ClarityBot
         </h1>
-        <p className="text-xs text-gray-600 mt-1">AI Fact-Checker</p>
+        <p className="text-xs text-[#555570] mt-0.5">AI Fact-Checker</p>
       </div>
 
-      <nav className="flex-1 mt-2">
-        {NAV_ITEMS.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/"}
-            className={({ isActive }) =>
-              `px-4 py-3 flex items-center gap-3 text-sm transition-colors ${
-                isActive
-                  ? "border-l-2 border-green-400 bg-gray-900 text-white"
-                  : "text-gray-400 hover:text-white hover:bg-gray-900 border-l-2 border-transparent"
-              }`
-            }
-          >
-            <span>{item.icon}</span>
-            {item.label}
-          </NavLink>
-        ))}
+      <div className="px-5 mt-6 mb-2">
+        <span className="text-[10px] uppercase tracking-[0.2em] font-mono font-semibold text-[#333348]">
+          NAVIGATION
+        </span>
+      </div>
+
+      <nav className="flex flex-col gap-0.5 px-3">
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === "/"}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 font-medium border-l-2 ${
+                  isActive
+                    ? "text-white bg-[#1a1a26] border-[#00ff88]"
+                    : "text-[#8888aa] hover:text-white hover:bg-[#12121a] border-transparent"
+                }`
+              }
+            >
+              <Icon size={14} />
+              {item.label}
+            </NavLink>
+          );
+        })}
       </nav>
 
-      <div className="px-4 py-4 border-t border-gray-800">
+      <div className="mt-auto pb-6 px-5">
         <StatusDot online={online} />
       </div>
     </div>

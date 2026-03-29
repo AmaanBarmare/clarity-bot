@@ -7,9 +7,9 @@
 
 body {
   margin: 0;
-  background-color: #111111;
-  color: #e5e5e5;
-  font-family: var(--font-sans);
+  background-color: #0a0a0f;
+  color: #f0f0ff;
+  font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -18,14 +18,47 @@ body {
   min-height: 100vh;
 }
 
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(16px); }
+@keyframes cardReveal {
+  from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.5); }
-  to   { opacity: 1; transform: scale(1); }
+@keyframes logIn {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+.cursor::after {
+  content: '\u2589';
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes ringSpinner {
+  to { stroke-dashoffset: -213.6; }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% center; }
+  to   { background-position: 200% center; }
+}
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    #12121a 25%,
+    #1a1a26 50%,
+    #12121a 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes barGrow {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
 }
 
 @keyframes fadeIn {
@@ -33,27 +66,18 @@ body {
   to   { opacity: 1; }
 }
 
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0; }
+@utility animate-card-reveal {
+  animation: cardReveal 400ms forwards;
 }
 
-@utility animate-slide-up {
-  animation: slideUp 0.4s ease-out forwards;
-}
-
-@utility animate-scale-in {
-  animation: scaleIn 0.3s ease-out forwards;
-}
-
-@utility animate-fade-in {
-  animation: fadeIn 0.3s ease-out forwards;
+@utility animate-log-in {
+  animation: logIn 150ms ease forwards;
 }
 
 @utility animate-blink {
   animation: blink 1s step-end infinite;
 }
 
-@utility animate-pulse-dot {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+@utility animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
 }

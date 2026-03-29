@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ExternalLink } from "lucide-react";
 import type { Claim } from "../api/client";
 import ScoreBadge from "./ScoreBadge";
 import VerdictTag from "./VerdictTag";
@@ -8,8 +9,39 @@ interface ResultCardProps {
   collapsed?: boolean;
 }
 
+const VERDICT_CARD_STYLES: Record<string, { bg: string; borderL: string; glow: string }> = {
+  FALSE: {
+    bg: "#1a0505",
+    borderL: "#ef4444",
+    glow: "0 0 0 1px #7f1d1d, 0 0 12px rgba(239, 68, 68, 0.15)",
+  },
+  MISLEADING: {
+    bg: "#1a0f00",
+    borderL: "#f59e0b",
+    glow: "0 0 0 1px #78350f, 0 0 12px rgba(245, 158, 11, 0.15)",
+  },
+  UNVERIFIED: {
+    bg: "#111118",
+    borderL: "#6366f1",
+    glow: "0 0 0 1px #3730a3",
+  },
+  TRUE: {
+    bg: "#001a0a",
+    borderL: "#22c55e",
+    glow: "0 0 0 1px #14532d, 0 0 12px rgba(34, 197, 94, 0.15)",
+  },
+  ERROR: {
+    bg: "#1a0505",
+    borderL: "#ef4444",
+    glow: "0 0 0 1px #7f1d1d, 0 0 12px rgba(239, 68, 68, 0.15)",
+  },
+};
+
+const DEFAULT_STYLE = { bg: "#12121a", borderL: "#1e1e2e", glow: "none" };
+
 export default function ResultCard({ claim, collapsed = false }: ResultCardProps) {
   const [expanded, setExpanded] = useState(!collapsed);
+  const [copied, setCopied] = useState(false);
 
   const date = new Date(claim.created_at).toLocaleDateString("en-US", {
     month: "short",
@@ -21,63 +53,77 @@ export default function ResultCard({ claim, collapsed = false }: ResultCardProps
   const truncatedText =
     claim.text.length > 120 ? claim.text.slice(0, 120) + "..." : claim.text;
 
+  const vstyle = claim.verdict
+    ? VERDICT_CARD_STYLES[claim.verdict] || DEFAULT_STYLE
+    : DEFAULT_STYLE;
+
+  const handleShare = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(
+      `${claim.text} — Score: ${claim.score}/10, Verdict: ${claim.verdict}`
+    );
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div
-      className={`bg-gray-900 rounded-xl border border-gray-800 p-6 ${
-        collapsed ? "cursor-pointer hover:border-gray-700 transition-colors" : ""
+      className={`rounded-xl border border-[#1e1e2e] p-6 transition-all duration-300 ${
+        collapsed ? "cursor-pointer" : ""
       }`}
+      style={{
+        backgroundColor: vstyle.bg,
+        borderLeftWidth: "4px",
+        borderLeftColor: vstyle.borderL,
+        boxShadow: vstyle.glow,
+        animation: collapsed ? undefined : "cardReveal 400ms forwards",
+      }}
       onClick={collapsed ? () => setExpanded(!expanded) : undefined}
     >
-      <div className="flex items-start gap-4">
-        <ScoreBadge score={claim.score} />
+      <div className="flex items-center gap-5">
+        <ScoreBadge score={claim.score} size={collapsed ? 56 : 80} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 flex-wrap">
-            <VerdictTag verdict={claim.verdict} />
-            <span className="text-xs text-gray-500">{date}</span>
-          </div>
-          <p className="text-gray-300 text-sm italic mt-2 wrap-break-word">
-            {expanded ? claim.text : truncatedText}
-            {!expanded && claim.text.length > 120 && (
-              <button
-                className="text-green-400 ml-1 not-italic hover:underline"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setExpanded(true);
-                }}
-              >
-                Show more
-              </button>
-            )}
-          </p>
+          <VerdictTag verdict={claim.verdict} />
+          <div className="text-xs font-mono text-[#555570] mt-1.5">{date}</div>
+          {collapsed && !expanded && (
+            <p className="text-[#8888aa] text-sm italic mt-1 truncate">
+              {truncatedText}
+            </p>
+          )}
         </div>
       </div>
 
       {expanded && (
         <>
+          <div className="mt-4 border-t border-[#1e1e2e] border-opacity-50" />
+
+          <p className="mt-4 text-sm italic text-[#8888aa] leading-relaxed">
+            {claim.text}
+          </p>
+
           {claim.explanation && (
-            <p className="text-gray-200 text-sm leading-relaxed mt-3">
+            <p className="text-sm text-[#d0d0e8] leading-relaxed mt-3">
               {claim.explanation}
             </p>
           )}
 
           {claim.sources && claim.sources.length > 0 && (
             <div className="mt-4">
-              <span className="text-xs text-gray-500 uppercase tracking-wide">
-                Sources
+              <span className="text-[10px] uppercase tracking-[0.2em] font-mono text-[#555570] mb-2 block">
+                SOURCES
               </span>
-              <div className="mt-2 space-y-1">
+              <div className="space-y-0.5">
                 {claim.sources.map((src, i) => (
                   <a
                     key={i}
                     href={src.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block text-green-400 text-sm hover:underline truncate"
+                    className="flex items-center gap-1.5 py-0.5 text-sm text-[#00ff88] hover:text-white transition-colors"
                     title={src.title}
                   >
-                    {src.title.length > 60
-                      ? src.title.slice(0, 60) + "..."
-                      : src.title}
+                    <ExternalLink size={11} className="text-[#555570] flex-shrink-0" />
+                    {src.title.length > 55 ? src.title.slice(0, 55) + "..." : src.title}
                   </a>
                 ))}
               </div>
@@ -85,15 +131,12 @@ export default function ResultCard({ claim, collapsed = false }: ResultCardProps
           )}
 
           <button
-            className="text-gray-500 text-xs hover:text-gray-300 mt-3 transition-colors"
-            onClick={(e) => {
-              e.stopPropagation();
-              navigator.clipboard.writeText(
-                `${claim.text} — Score: ${claim.score}/10, Verdict: ${claim.verdict}`
-              );
-            }}
+            className={`mt-3 text-xs font-mono transition-colors ${
+              copied ? "text-[#00ff88]" : "text-[#555570] hover:text-[#8888aa]"
+            }`}
+            onClick={handleShare}
           >
-            Share
+            {copied ? "\u2713 copied" : "\u2197 share result"}
           </button>
         </>
       )}

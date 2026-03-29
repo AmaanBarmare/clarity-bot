@@ -4,10 +4,19 @@ interface LogLineProps {
   event: LogEvent;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  done: "text-green-400",
-  running: "text-amber-400",
-  error: "text-red-400",
+const STEP_COLORS: Record<string, string> = {
+  extractor: "text-[#818cf8]",
+  searcher: "text-[#22d3ee]",
+  crossref: "text-[#a78bfa]",
+  scorer: "text-[#fbbf24]",
+  emitter: "text-[#00ff88]",
+  error: "text-[#f87171]",
+};
+
+const MSG_COLORS: Record<string, string> = {
+  done: "text-[#d0d0e8]",
+  running: "text-[#8888aa]",
+  error: "text-[#fca5a5]",
 };
 
 export default function LogLine({ event }: LogLineProps) {
@@ -18,16 +27,27 @@ export default function LogLine({ event }: LogLineProps) {
     second: "2-digit",
   });
 
-  const color = STATUS_COLORS[event.status] || "text-gray-400";
+  const stepColor = STEP_COLORS[event.step] || "text-[#8888aa]";
+  const msgColor = MSG_COLORS[event.status] || "text-[#8888aa]";
 
   return (
-    <div className={`py-0.5 font-mono text-sm animate-fade-in ${color}`}>
-      <span className="text-gray-600">[{time}]</span>{" "}
-      <span className="text-gray-500">[{event.step}]</span>{" "}
-      {event.status === "running" && (
-        <span className="inline-block w-3 h-3 border border-amber-400 border-t-transparent rounded-full animate-spin mr-1 align-text-bottom" />
-      )}
-      {event.message}
+    <div className="flex items-start gap-2 py-0.5 animate-log-in">
+      <span className="text-[#333348] font-mono text-sm flex-shrink-0 w-[70px]">
+        [{time}]
+      </span>
+      <span className={`font-mono text-sm flex-shrink-0 w-[84px] ${stepColor}`}>
+        [{event.step}]
+      </span>
+      <span className="flex-shrink-0 w-4">
+        {event.status === "running" && (
+          <span
+            className={`inline-block w-3 h-3 border border-current rounded-full border-t-transparent animate-spin ${stepColor}`}
+          />
+        )}
+      </span>
+      <span className={`flex-1 font-mono text-sm ${msgColor}`}>
+        {event.message}
+      </span>
     </div>
   );
 }
