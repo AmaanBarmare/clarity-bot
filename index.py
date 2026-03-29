@@ -1,10 +1,13 @@
-"""Vercel / single-host entrypoint — loads FastAPI app from backend/main.py without import name clashes."""
-import importlib.util
+"""Vercel entrypoint — loads the FastAPI app from backend/main.py."""
+import sys
 from pathlib import Path
 
-_backend_main = Path(__file__).resolve().parent / "backend" / "main.py"
-spec = importlib.util.spec_from_file_location("clarity_backend_main", _backend_main)
-mod = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(mod)
-app = mod.app
+_root = Path(__file__).resolve().parent
+_backend = _root / "backend"
+
+if str(_backend) not in sys.path:
+    sys.path.insert(0, str(_backend))
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
+from backend.main import app  # noqa: E402, F401

@@ -1,5 +1,4 @@
 import database
-from queue_manager import queue_manager
 from skills.fact_check.extractor import extract
 from skills.fact_check.searcher import search
 from skills.fact_check.crossref import crossref
@@ -10,7 +9,6 @@ from skills.fact_check.emitter import emit
 async def run_pipeline(claim: str, claim_id: str) -> None:
     async def log_cb(step: str, status: str, message: str):
         await database.insert_log(claim_id, step, status, message)
-        await queue_manager.push(claim_id, step, status, message)
 
     try:
         result1 = await extract(claim, log_cb)
@@ -60,4 +58,4 @@ async def run_pipeline(claim: str, claim_id: str) -> None:
             pass
 
     finally:
-        await queue_manager.close(claim_id)
+        pass

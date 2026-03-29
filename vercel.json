@@ -1,7 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "fastapi",
-  "installCommand": "pip install -r requirements.txt && cd frontend && npm ci",
-  "buildCommand": "bash scripts/vercel-build.sh",
-  "regions": ["iad1"]
+  "installCommand": "pip install -r requirements.txt",
+  "buildCommand": "echo 'public already built'",
+  "regions": ["iad1"],
+  "redirects": [
+    { "source": "/", "destination": "/index.html", "permanent": false }
+  ],
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }

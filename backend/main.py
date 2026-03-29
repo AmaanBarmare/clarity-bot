@@ -14,6 +14,7 @@ import database
 from agent import run_pipeline
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -34,6 +35,11 @@ def _allowed_origins() -> list[str]:
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PUBLIC_DIR = _REPO_ROOT / "public"
+
+for candidate in [Path("/vercel/path0/public"), _backend_dir / "static"]:
+    if candidate.is_dir():
+        _PUBLIC_DIR = candidate
+        break
 
 app = FastAPI(title="ClarityBot API", version="1.0.0")
 
