@@ -37,11 +37,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _resolve_public_dir() -> Path:
-    """Prefer full Vite output (index.html + assets/). backend/static only has index."""
+    """Serve full Vite output (index.html + assets/). Prefer backend/static on Vercel — it is always bundled with the Python app; repo-root public/ often is not."""
     candidates = [
+        _backend_dir / "static",
         Path("/vercel/path0/public"),
         _REPO_ROOT / "public",
-        _backend_dir / "static",
     ]
     for c in candidates:
         if c.is_dir() and (c / "index.html").is_file() and (c / "assets").is_dir():

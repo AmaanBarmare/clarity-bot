@@ -15,8 +15,10 @@ venv/
 node_modules/
 frontend/dist/
 
-# Vercel static bundle (built from frontend/)
-public/
+# Do not git-ignore public/ or backend/static/ build output: Vercel Git deploys package
+# the workspace after build; ignored paths can be omitted from CDN + function (FastAPI static
+# assets must live under public/** per https://vercel.com/docs/frameworks/backend/fastapi ).
+# Locally: run `git status` and avoid committing hashed assets unless you intend to.
 
 # OS
 .DS_Store
