@@ -1,454 +1,468 @@
-# ClarityBot
+# ClarityBot — Live AI Fact-Checking Pipeline
 
-**An AI-powered misinformation fact-checker built in 24 hours at HackPSU Spring 2026.**
+![React](https://img.shields.io/badge/React_19-61DAFB?style=flat&logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white)
+![Python](https://img.shields.io/badge/Python_3-F7DF1E?style=flat&logo=python&logoColor=black)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=flat&logo=tailwindcss&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=flat&logo=supabase&logoColor=white)
+![Vercel](https://img.shields.io/badge/Vercel-000000?style=flat&logo=vercel&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini_2.5_Flash-4285F4?style=flat&logo=google&logoColor=white)
+![NVIDIA](https://img.shields.io/badge/NVIDIA_Nemotron-76B900?style=flat&logo=nvidia&logoColor=white)
+![OpenClaw](https://img.shields.io/badge/OpenClaw-skill--based_agent-8B5CF6?style=flat)
 
-You paste any claim, headline, or viral statement. ClarityBot breaks it down,
-searches for primary sources, cross-checks the evidence, and returns a
-credibility score from 1 to 10 — with a verdict, plain-English explanation,
-and source links. Every step of that process streams live to the dashboard
-as it happens.
+Paste any headline, viral post, or “friend said…” claim. ClarityBot runs an **OpenClaw-style, five-skill agent pipeline**: break the claim into checkable assertions, pull web evidence (Google results via Serper), cross-reference with an LLM that sees **per-source credibility labels**, score 1–10 with **hard caps when evidence is weak**, then persist everything to Postgres. **Every stage streams to the UI** over Server-Sent Events so a demo audience watches the agent “think” in real time—not a single spinner that hides 30 seconds of work.
 
----
+Built for **HackPSU Spring 2026** as a misinformation / media-literacy demo: the product story is transparency (show the steps), not a black-box score.
 
-## The problem it solves
-
-Misinformation spreads faster than corrections. Fact-checking today requires
-opening multiple browser tabs, searching manually, and judging source quality
-yourself. ClarityBot compresses that process to about 15 seconds and makes
-the reasoning transparent — you can see exactly how it reached its conclusion.
-
----
-
-## Live demo
-
-> Submit a claim → watch a 5-step AI pipeline fire in real time → see the score
-
-![Pipeline animation showing 5 steps completing in sequence]
-![Result card showing score 2/10, verdict FALSE, with sources]
-![Agent logs terminal showing live step output]
-![Trend report with donut and bar charts]
+> **Live:** [clarity-bot-brown.vercel.app](https://clarity-bot-brown.vercel.app)
 
 ---
 
-## What makes this technically interesting
+## Table of Contents
 
-### 1. It's not just "call an AI and show the answer"
+- [Problem & Motivation](#problem--motivation)
+- [What This Is (and Is Not)](#what-this-is-and-is-not)
+- [OpenClaw, Nemotron & Gemini](#openclaw-nemotron--gemini)
+- [Key Design Decisions](#key-design-decisions)
+- [Features](#features)
+- [Architecture](#architecture)
+- [End-to-End Request Flow](#end-to-end-request-flow)
+- [The Five Skills](#the-five-skills)
+- [Problems I Hit Building This](#problems-i-hit-building-this)
+- [Tech Stack](#tech-stack)
+- [Database Schema](#database-schema)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+- [Deployment (Vercel)](#deployment-vercel)
+- [Security: NemoClaw Sandbox](#security-nemoclaw-sandbox)
+- [Roadmap](#roadmap)
+- [License](#license)
 
-Most AI demos are a single API call wrapped in a UI. ClarityBot runs a
-structured 5-step pipeline where each step does something distinct:
+---
+
+## Problem & Motivation
+
+Fact-checking in the wild is slow and uneven. You open tabs, skim SEO sludge, guess whether a domain is trustworthy, and still walk away unsure. Meanwhile, “AI fact checkers” often collapse into **one prompt, one answer**—fast, but useless for teaching *why* a conclusion was reached.
+
+ClarityBot optimizes for **inspectability under time pressure** (a hackathon demo, a recruiter screen, a classroom):
+
+1. **Structured decomposition** — Not every string is a factual claim. The first stage classifies and extracts assertions; opinions and non-factual content exit early with an explicit UNVERIFIED path (no wasted search spend).
+2. **Evidence-first** — Search happens *before* the model free-associates, so the cross-reference step is grounded in URLs and snippets the user can open.
+3. **Source hygiene encoded in code** — Domains are scored (high / medium / low) with an explicit blocklist for UGC and low-trust patterns. That metadata is injected into the cross-reference prompt *and* fed into scoring caps so the model cannot “sound confident” on Reddit threads alone.
+
+The emotional goal: make **epistemic humility** a first-class outcome—capped scores and UNVERIFIED verdicts when the evidence does not support strong claims.
+
+---
+
+## What This Is (and Is Not)
+
+| It is | It isn’t |
+|--------|-----------|
+| A **pipeline** of small, testable steps with shared logging | A single mega-prompt that returns `{ score, verdict }` |
+| A **live SSE** narrative of those steps (DB-backed, serverless-safe) | A WebSocket chat app |
+| A **credibility-aware** scorer with deterministic guardrails | A naive “trust whatever the LLM says” wrapper |
+| A **Vercel + FastAPI** deployment with a pre-built SPA in `public/` | A long-lived always-on worker with in-memory job queues |
+
+The orchestration lives in plain **async Python** (`backend/agent.py`) calling discrete modules under `skills/fact_check/`—the same **skill graph** you would wire in **OpenClaw**: each step is a named capability with a single job, shared logging, and explicit handoff to the next skill.
+
+---
+
+## OpenClaw, Nemotron & Gemini
+
+### Why OpenClaw
+
+Fact-checking is not a single completion—it is a **chain of decisions** (what is checkable?, what did the web say?, does evidence support the claim?, how confident can we be?, what do we store?). **OpenClaw** is built around that idea: an **agent as a graph of skills**, not one prompt that does everything.
+
+I used that shape on purpose:
+
+- **Composability** — Swap search, swap the scorer prompt, or add a “human review” skill without rewriting a monolith.
+- **Observable demos** — Each skill emits logs; the UI can show *which* step failed instead of a generic error.
+- **Alignment with hackathon tracks** — IST / OpenClaw-style challenges reward explicit agent design, not a thin wrapper around `chat.completions`.
+
+ClarityBot implements the same **five-skill contract** OpenClaw expects: `extractor → searcher → crossref → scorer → emitter`, orchestrated in `agent.py`.
+
+### Why Nemotron to run OpenClaw (inside NemoClaw)
+
+When you run the agent **inside NemoClaw** (NVIDIA’s OpenShell sandbox), egress is **deny-by-default**. The only LLM egress hole I carved for “our” stack—besides Gemini, which I also allow for flexibility—is **`build.nvidia.com`**, i.e. **Nemotron** inference on NVIDIA Build.
+
+**Nemotron is the natural LLM for the OpenClaw path in that sandbox:**
+
+1. **Same trust story as the sandbox** — NemoClaw is an NVIDIA runtime; Nemotron is served from **NVIDIA Build**. For judges and security reviewers, “agent + policy + inference” stays on **one vendor surface** instead of sending every weighty reasoning call to a random endpoint you would have to justify in the policy file.
+2. **Agent-scale reasoning** — Multi-step fact-checking needs the model to hold **assertions, snippets, credibility tags, and scoring rules** in head at once. Nemotron families are aimed at **long-context, tool-style workloads**—exactly the profile of cross-reference + scoring after search, not just a one-line classification.
+3. **Policy-meets-code** — `nemoclaw/openclaw-sandbox.yaml` allowlists `build.nvidia.com` **because** the OpenClaw-shaped pipeline is supposed to call home there when running in the sandbox. The README, the policy file, and the demo narrative stay in sync: *this* is the endpoint the secured agent is allowed to use for NVIDIA-side inference.
+4. **Defense in depth** — Even if prompt injection nudges the agent, **NemoClaw** still cannot open arbitrary URLs; Nemotron traffic goes only to the allowlisted host. OpenClaw defines *what* runs; Nemotron + NemoClaw define *where* heavy inference is allowed to go.
+
+So: **OpenClaw** = structure of the agent; **Nemotron** = the LLM I pair with that structure when I want **sandboxed, NVIDIA-native execution** with a straight line from policy → `build.nvidia.com`.
+
+### Why Gemini (and how it fits)
+
+The **public** app on Vercel runs the **same five skills** but calls **Gemini 2.5 Flash** over REST (`skills/fact_check/gemini.py`): fast, cost-effective, excellent at **structured JSON** (extracted assertions, support labels, scores), and trivial to wire for a short hackathon window.
+
+**Gemini vs Nemotron is not “pick one and delete the other”—it’s two deployment faces of the same pipeline:**
+
+| Context | Inference | Role |
+|--------|-----------|------|
+| **NemoClaw + OpenClaw demo** | **Nemotron** (NVIDIA Build) | Secured agent runtime; policy-aligned egress; strong narrative for NVIDIA / OpenClaw tracks |
+| **Hosted demo (`vercel.app`)** | **Gemini 2.5 Flash** | Low-latency, serverless-friendly HTTP; retries for 429s; what this repo implements for `extract` / `crossref` / `score` today |
+
+Search (**Serper**) is shared: both paths still ground the model in **Google organic results** before synthesis—evidence-first, regardless of which LLM tokenizes the reasoning.
+
+Set `NVIDIA_API_KEY` in `backend/.env` (see `.env.example`) when you wire Nemotron on Build; the sandbox policy is already prepared for that traffic.
+
+---
+
+## Key Design Decisions
+
+### 1. Split `POST /api/check` and `POST /api/execute/{claim_id}`
+
+On a traditional server, you might enqueue work after insert and return immediately. **Vercel serverless functions do not share memory** between invocations—`BackgroundTasks` in FastAPI does not give you a durable worker the way a process model does on your laptop.
+
+So the contract is deliberate:
+
+- **`check`** — Insert the row, return `claim_id`.
+- **Client** — Open the SSE stream, *then* call **`execute`** so logs have somewhere to land while the function runs.
+- **`execute`** — Runs the full pipeline **synchronously** inside one invocation (bounded by Vercel max duration).
+
+This looks a little odd in OpenAPI; it is the shape you get when **the platform’s execution model**, not aesthetics, drives the API.
+
+### 2. SSE That Polls Postgres Instead of an In-Memory Queue
+
+Local development originally wanted an `asyncio.Queue` per `claim_id`. That breaks the moment traffic hits a different lambda instance than the one doing the work.
+
+The stream endpoint (`GET /api/logs/stream`) **polls Supabase on a ~450ms cadence**, diffs what it has already sent, emits `event: log` for new rows, sends **heartbeats every 25s** to survive proxies, and stops on terminal conditions (`emitter` done, `error` step, score populated, or a 900s safety cap).
+
+Tradeoff: slightly higher read load and latency than a push queue. Win: **identical semantics** for live runs *and* historical replay—same code path.
+
+### 3. `asyncio.to_thread()` for Every Supabase Call
+
+The official Supabase Python client is **synchronous**. Awaiting it directly inside `async def` handlers would block the event loop and serialize your API under concurrency.
+
+Every `client.table(...)` interaction goes through `asyncio.to_thread(...)`. That one discipline is the difference between “works on my machine with one user” and “does not stall health checks when a claim is heavy.”
+
+### 4. Source Credibility as Data, Not Vibes
+
+`source_credibility.py` centralizes:
+
+- Topic-aware **high-trust** domains (space / health / history plus major wires and fact-checkers).
+- **Medium** for many `.gov` / `.edu` and serious secondary outlets.
+- **Low** for unknowns—and an explicit **blocklist** (social platforms, Wikipedia for this use case, generic blogs, etc.).
+
+After search, **`filter_credible_sources`** can drop noise before cross-reference. If *everything* is low-trust, sources are retained but the scorer **caps the score** (and forces UNVERIFIED when appropriate) so garbage-in does not become confident-out.
+
+### 5. Gemini via REST + Honest Retry Policy (hosted path)
+
+For the Vercel-facing pipeline, `skills/fact_check/gemini.py` calls `gemini-2.5-flash` over HTTP with **429 backoff** (exponential sleeps, capped attempts) and strips markdown fences before `json.loads`. See [OpenClaw, Nemotron & Gemini](#openclaw-nemotron--gemini) for why Gemini here vs Nemotron in NemoClaw.
+
+### 6. Serper Instead of Legacy Google Programmatic Search
+
+Google’s **Custom Search JSON API** is not a viable default for new projects (availability / onboarding). Serper returns **Google organic results** over a simple REST shape, which matches what you want for “what a human would see on Google” without running a browser farm.
+
+---
+
+## Features
+
+| Surface | What you get |
+|--------|----------------|
+| **Check Claim** | Large input, animated 5-step rail driven by SSE log events, result card when `score` is non-null |
+| **History** | All claims from Supabase, verdict filters, keyword search |
+| **Trend Report** | Weekly verdict mix + activity—**hand-written SVG** (no charting deps) |
+| **Agent Logs** | Terminal aesthetic; reads `lastClaimId` from `localStorage` for continuity after navigation |
+| **Health** | Lightweight polling from the shell layout |
+
+Frontend rule worth stealing: **all `fetch` and `EventSource` live in `src/api/client.ts`**—pages stay declarative.
+
+---
+
+## Architecture
 
 ```
-① Extract       Break the claim into specific, checkable assertions
-      ↓
-② Search        Find 3–5 primary sources via Serper (Google results)
-      ↓
-③ Cross-reference   Ask the AI: does the evidence support the claim?
-      ↓
-④ Score         Map the evidence strength to a 1–10 credibility score
-      ↓
-⑤ Save          Write the result to the database and close the stream
-```
-
-Each step is a separate module with a single responsibility. If the claim
-is an opinion or satire rather than a factual statement, the pipeline
-exits early at step 1 and returns "UNVERIFIED" — no wasted API calls.
-
-### 2. Real-time streaming via Server-Sent Events
-
-The dashboard doesn't poll or wait for a final result. As each pipeline
-step completes, the backend pushes a log event to the frontend over a
-persistent HTTP connection (Server-Sent Events). The UI animates each
-step in sequence as the events arrive — the same way a terminal streams
-build output.
-
-The SSE endpoint polls Supabase for new log rows instead of reading from
-an in-memory queue, which makes it work on both local dev and Vercel's
-stateless serverless functions. This also means the same endpoint serves
-both live streams and historical playback.
-
-### 3. NVIDIA NemoClaw sandbox (released 12 days before the hackathon)
-
-This is the security layer — and the part that took the most research.
-
-The AI agent runs inside a NemoClaw sandbox, which is NVIDIA's open-source
-security runtime for AI agents, released on March 16, 2026 — 12 days
-before this hackathon. The sandbox enforces a network policy at the
-operating system level: the agent can only reach Gemini, Serper (Google search),
-and NVIDIA's inference endpoint. Everything else is blocked.
-
-Why does this matter? A common attack against AI agents is "prompt injection"
-— where a malicious input tricks the agent into doing something it shouldn't,
-like sending your data to an attacker's server. With NemoClaw, that request
-is blocked at the OS level before it leaves the process. The agent literally
-cannot reach an unauthorized URL, regardless of what the LLM decides to do.
-
-This is a meaningful security guarantee, not a prompt-level guardrail.
-
-### 4. Source credibility weighting
-
-Not all search results are equal. A NASA.gov page about the moon landing
-carries more weight than a random blog post. ClarityBot maintains a
-curated registry of trusted sources organized by topic — Space/NASA,
-Vaccines/Health, and Historical facts — plus cross-topic fact-checkers
-like Snopes and Reuters.
-
-During cross-referencing, each source is labeled with its credibility
-level (HIGH, MEDIUM, or LOW) directly in the prompt, so the AI weighs
-authoritative sources more heavily. During scoring, if no high-credibility
-sources were found, the score is automatically capped and the verdict
-defaults to UNVERIFIED — preventing confident conclusions from
-unreliable evidence.
-
-### 5. The async database challenge
-
-Supabase's Python client is synchronous — it blocks the thread while waiting
-for a database response. FastAPI runs on an async event loop, which means a
-blocking call freezes the entire server.
-
-The fix: wrap every database call in `asyncio.to_thread()`, which moves the
-blocking work to a thread pool and lets the event loop continue handling
-other requests. Getting this right was the difference between a server that
-handles one request at a time and one that handles concurrent requests properly.
-
----
-
-## Tech stack
-
-| Layer | Technology | What it does |
-|-------|-----------|--------------|
-| Frontend | React + Vite + TypeScript + Tailwind | 4-page dashboard |
-| Backend | FastAPI (Python) | REST API + SSE stream |
-| Agent framework | OpenClaw | Modular skill-based AI agent |
-| Security sandbox | NemoClaw (NVIDIA) | Network policy enforcement |
-| LLM inference | Nemotron 3 Super 120B | Runs via NVIDIA cloud |
-| Claim analysis | Gemini 2.5 Flash (Google) | Assertion extraction + cross-referencing |
-| Web search | Serper.dev (Google results) | Primary source retrieval |
-| Database | Supabase (Postgres) | Stores claims, logs, trends |
-| Realtime | Server-Sent Events | Live log streaming to frontend |
-| Deployment | Vercel | Serverless hosting (FastAPI + static frontend) |
-
----
-
-## System architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│              React Dashboard                        │
-│       (Vite dev :5173 / Vercel CDN in prod)         │
-│                                                     │
-│  Check Claim │ History │ Trend Report │ Agent Logs  │
-└──────────────────────┬──────────────────────────────┘
-                       │  HTTP /api/* + SSE
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│           FastAPI Backend (/api prefix)             │
-│     (uvicorn :8000 local / Vercel serverless)       │
-│                                                     │
-│  POST /api/check      →  insert claim, return ID    │
-│  POST /api/execute/id →  run pipeline (sync)        │
-│  GET  /api/results    →  past claims from Supabase  │
-│  GET  /api/trends     →  weekly stats               │
-│  GET  /api/logs/stream → SSE (DB-backed polling)    │
-│  GET  /api/logs/id    →  historical logs (REST)     │
-└──────────────────────┬──────────────────────────────┘
-                       │  subprocess
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│       NemoClaw Sandbox (NVIDIA OpenShell)           │
-│                                                     │
-│  Network policy: deny all except Gemini + Serper    │
-│  Filesystem: isolated to /sandbox only              │
-└──────────────────────┬──────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│          OpenClaw Agent — 5 Skills                  │
-│                                                     │
-│  extractor → searcher → crossref → scorer → emitter │
-│                                                     │
-│  Each skill emits a log event as it runs            │
-└──────────────────────┬──────────────────────────────┘
-                       │  reads / writes
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│                 Supabase (Postgres)                 │
-│                                                     │
-│  claims  │  logs  │  trends                         │
-└─────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│  React + Vite + TypeScript + Tailwind (localhost:5173 / CDN)       │
+│  CheckClaim · History · TrendReport · AgentLogs                     │
+│       │                                                             │
+│       │  REST + SSE  (Vite proxies /api → FastAPI in dev)            │
+└───────┼─────────────────────────────────────────────────────────────┘
+        ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  FastAPI (`backend/main.py`, routes under `/api`)                   │
+│  · POST /check          insert claim                                │
+│  · POST /execute/{id}   run pipeline (sync in one invocation)       │
+│  · GET  /results, /trends                                           │
+│  · GET  /logs/stream    SSE (poll Supabase)                         │
+│  · GET  /logs/{id}      REST log fetch                              │
+└───────┬───────────────────────────────┬────────────────────────────┘
+        │                               │
+        ▼                               ▼
+┌─────────────────────────────┐ ┌────────────────────────────────────┐
+│  Skill graph (OpenClaw)      │ │  Supabase Postgres                  │
+│  · Serper (search) — always  │ │  claims · logs · trends             │
+│  · LLM: Gemini (Vercel path) │ │                                     │
+│    or Nemotron in NemoClaw   │ │                                     │
+└─────────────────────────────┘ └────────────────────────────────────┘
 ```
 
 ---
 
-## Project structure
+## End-to-End Request Flow
+
+```
+User submits claim
+      │
+      ▼
+POST /api/check ──► row in `claims` (score null), claim_id returned
+      │
+      ├──► EventSource GET /api/logs/stream?claim_id=…
+      │         └── poll loop yields log rows as SSE until done / error / score set
+      │
+      └──► POST /api/execute/{claim_id} ──► run_pipeline(...)
+                │
+                ├── extractor   (Gemini: assertions + claim type)
+                ├── [early exit if not factual → UNVERIFIED, score 5]
+                ├── searcher    (Serper: organic results)
+                ├── filter_credible_sources
+                ├── crossref    (Gemini: support vs evidence, with credibility tags)
+                ├── scorer      (Gemini: 1–10 + verdict, caps by source tier)
+                └── emitter     (persist claim + upsert trends + final log)
+      │
+      ▼
+Frontend polls GET /api/results/{id} until score !== null (backup to SSE completion)
+```
+
+**Ordering matters:** if you called `execute` before subscribing to SSE, you could miss the first log lines in a fast stage. The UI opens the stream first, then kicks off execution.
+
+---
+
+## The Five Skills
+
+| Step | Module | Responsibility |
+|------|--------|----------------|
+| 1 | `extractor.py` | Classify claim type; extract up to N checkable assertions (JSON to Gemini) |
+| 2 | `searcher.py` | Query Serper per assertion; dedupe URLs; collect title/url/snippet |
+| — | `source_credibility.py` | Filter / label domains; aggregate counts for prompts |
+| 3 | `crossref.py` | Compare evidence to original claim with **[CREDIBILITY | DOMAIN]** prefixes |
+| 4 | `scorer.py` | Map support level → score + verdict; enforce caps when tiers are missing |
+| 5 | `emitter.py` | Write final claim row, trend upsert, completion log |
+
+Shared helper: `gemini.py` (retry, fence stripping) for the **Gemini**-backed hosted pipeline—the same prompts and JSON contracts can target **Nemotron** when the agent runs under **OpenClaw inside NemoClaw** (see [OpenClaw, Nemotron & Gemini](#openclaw-nemotron--gemini)). Logging contract: every skill calls `log_cb(step, status, message)` so the UI keys off stable `step` names: `extractor`, `searcher`, `crossref`, `scorer`, `emitter`, `error`.
+
+---
+
+## Problems I Hit Building This
+
+These are **real integration failures**, not a generic “challenges” list—each one forced a concrete change in code or architecture.
+
+### 1. “Background work” on serverless is a lie (for this stack)
+
+**Symptom:** Everything worked locally with the mental model “insert claim, fire background job, return.” On Vercel, the “background” never reliably shared state with the next HTTP request.
+
+**Lesson:** The platform does not owe you a process. If you need multi-step work, either **finish inside one invocation** (what we do—up to timeout), or **externalize** with a queue / workflow product you actually wire up.
+
+**Fix:** Split **create** vs **execute**, and accept that `execute` is long-running HTTP from the client’s perspective.
+
+### 2. In-memory SSE queues and lambda instances don’t mix
+
+**Symptom:** Logs would “sometimes” never show in production, or stream from the wrong memory space.
+
+**Lesson:** Anything that assumes **sticky server memory** dies on autoscaling serverless.
+
+**Fix:** Make the SSE endpoint a **thin poller over Postgres**—the pipeline already writes logs row-by-row; the stream just tails the table. Same code handles **live** and **replay**.
+
+### 3. Blocking DB client vs async FastAPI
+
+**Symptom:** Under parallel requests, latency spikes looked like “Gemini is slow” when often the event loop was **blocked on Supabase**.
+
+**Lesson:** Sync I/O inside `async def` is a silent performance bug.
+
+**Fix:** Wrap Supabase calls in `asyncio.to_thread` consistently (`database.py`).
+
+### 4. Search API churn (Google Custom Search → Serper)
+
+**Symptom:** Original plan assumed a Google API that **new projects cannot adopt** the same way. Docs and stack-overflow answers go stale fast.
+
+**Lesson:** For hackathons, **prefer APIs you can sign up for in five minutes** with predictable JSON.
+
+**Fix:** Serper as the search back end; simple `httpx` POST with `X-API-KEY`.
+
+### 5. Serving the Vite build from the same FastAPI app on Vercel
+
+**Symptom:** `public/` might not land beside the Python entrypoint depending on upload ignores and builder output paths—users hit API routes but got 404 on `/`.
+
+**Lesson:** Static asset location on PaaS is **path resolution**, not `npm run build` alone.
+
+**Fix:** `_resolve_public_dir()` tries `backend/static`, `/vercel/path0/public`, repo `public/`—first match with `index.html` + `assets/` wins (`main.py`). Document the `scripts/vercel-build.sh` contract so production stays reproducible.
+
+### 6. Rate limits are part of the architecture
+
+**Symptom:** Burst demos → HTTP 429 from Gemini.
+
+**Lesson:** Retries with backoff are **required**, not polish.
+
+**Fix:** Exponential backoff in `gemini.py`; keep prompts structured so failures are easy to distinguish from model refusals.
+
+### 7. Frontend / backend coupling on step names
+
+**Symptom:** Rename a step in Python and the UI rail silently stops updating.
+
+**Lesson:** Treat `step` strings as **protocol**, not internal labels.
+
+**Fix:** Single source of truth documented in both places; `CheckClaim.tsx` maps `extractor → … → emitter` to match the backend exactly.
+
+---
+
+## Tech Stack
+
+| Layer | Choice | Why |
+|-------|--------|-----|
+| Agent shape | **OpenClaw** (skill-based pipeline) | Five explicit skills, observable steps, matches competition / “real agent” expectations—not one black-box completion |
+| LLM (sandbox path) | **Nemotron** via **NVIDIA Build** (`build.nvidia.com`) | Pairs with **NemoClaw**: policy allowlist, long-context agent workloads, single-vendor security story for OpenClaw-in-sandbox demos |
+| LLM (hosted path) | **Gemini 2.5 Flash** (REST) | Fast structured JSON, 429 backoff in code, ideal for serverless latency and hackathon iteration |
+| UI | React + Vite + TypeScript + Tailwind | Fast iteration, strict types, demo-grade styling |
+| API | FastAPI | Async-native, OpenAPI for free, Python for ML/LLM glue |
+| Streaming | `sse-starlette` | SSE over HTTP—no socket server |
+| Search | Serper.dev | Google results JSON without legacy Search API friction |
+| Data | Supabase (Postgres) | Hosted DB + simple client; logs as events table |
+| Deploy | Vercel | Single project: FastAPI entry (`index.py`) + static SPA |
+| Hardening | **NemoClaw** + `openclaw-sandbox.yaml` | Default-deny egress; Gemini, Serper, NVIDIA Build explicitly allowed |
+
+---
+
+## Database Schema
+
+```sql
+-- claims: one row per user submission; sources stored as JSON string
+claims (
+  id text PK,
+  text text,
+  score int,
+  verdict text,
+  explanation text,
+  sources text,
+  created_at timestamptz
+)
+
+logs (
+  id bigserial PK,
+  claim_id text,
+  step text,
+  status text,
+  message text,
+  ts timestamptz
+)
+
+trends (
+  week text PK,       -- e.g. ISO week format from app logic
+  total int,
+  false_pct real,
+  mislead_pct real,
+  unverified_pct real,
+  true_pct real,
+  avg_score real
+)
+```
+
+---
+
+## Project Structure
 
 ```
 claritybot/
 ├── frontend/
-│   ├── index.html               Google Fonts (Inter + JetBrains Mono)
-│   ├── vite.config.ts           Tailwind plugin + /api proxy to backend
 │   └── src/
-│       ├── api/client.ts        All API calls (BASE = "/api")
-│       ├── pages/
-│       │   ├── CheckClaim.tsx   Submit form + live pipeline UI
-│       │   ├── History.tsx      Past fact-checks with search + filter
-│       │   ├── TrendReport.tsx  Charts built in plain SVG
-│       │   └── AgentLogs.tsx    Terminal-style live log panel
-│       └── components/
-│           ├── ScoreBadge.tsx   Circular 1–10 score indicator
-│           ├── VerdictTag.tsx   FALSE / MISLEADING / UNVERIFIED / TRUE
-│           ├── ResultCard.tsx   Full fact-check result display
-│           └── LogLine.tsx      Single terminal log row
-│
+│       ├── api/client.ts       # all HTTP + EventSource
+│       ├── pages/              # CheckClaim, History, TrendReport, AgentLogs
+│       └── components/         # ScoreBadge, VerdictTag, ResultCard, …
 ├── backend/
-│   ├── main.py                  FastAPI app, APIRouter(/api), 7 routes
-│   ├── agent.py                 Pipeline orchestrator
-│   ├── database.py              All Supabase reads/writes
-│   ├── queue_manager.py         SSE event queue (local dev)
-│   └── skills/fact_check/
-│       ├── gemini.py            Shared Gemini helper (retry + backoff)
-│       ├── extractor.py         Step 1
-│       ├── searcher.py          Step 2
-│       ├── crossref.py          Step 3 (with credibility labels)
-│       ├── scorer.py            Step 4 (with source quality caps)
-│       ├── emitter.py           Step 5
-│       └── source_credibility.py  Trusted source registry
-│
+│   ├── main.py                 # FastAPI app, SSE loop, static resolution
+│   ├── agent.py                # orchestrates skills + error handling
+│   ├── database.py             # Supabase I/O (async-wrapped)
+│   ├── queue_manager.py        # local/dev helper; production path is DB SSE
+│   └── skills/fact_check/      # extractor, searcher, crossref, scorer, emitter
 ├── nemoclaw/
-│   ├── openclaw-sandbox.yaml    Network allowlist policy
-│   └── setup.sh                 Sandbox bootstrap
-│
-├── index.py                     Vercel FastAPI entrypoint
-├── vercel.json                  Vercel config (framework: fastapi)
-├── requirements.txt             Root pip deps for Vercel
-├── pyproject.toml               Python project metadata for Vercel
-├── scripts/
-│   └── vercel-build.sh          Builds frontend into public/ for CDN
-└── .vercelignore                Controls Vercel upload
+│   ├── openclaw-sandbox.yaml   # network allowlist policy
+│   └── setup.sh
+├── index.py                    # Vercel entry → imports backend app
+├── scripts/vercel-build.sh     # build frontend → public/
+├── vercel.json
+└── requirements.txt            # root deps for Vercel builder
 ```
 
 ---
 
-## Running it locally
+## Getting Started
 
-**Prerequisites:** Python 3.11+, Node.js 18+, a NemoClaw-compatible system
+### Prerequisites
 
-**Step 1 — Get your API keys** (all have free tiers)
+- Python 3.11+
+- Node.js 18+
+- Supabase project + API keys
+- Gemini + Serper API keys
 
-| Key | Where to get it |
-|-----|----------------|
-| Gemini API | aistudio.google.com |
-| Serper API | serper.dev (2500 free queries) |
-| NVIDIA Nemotron | build.nvidia.com |
-| Supabase URL + key | supabase.com |
-
-**Step 2 — Set up Supabase**
-
-Create a new project at supabase.com, then run this in the SQL editor:
-
-```sql
-create table claims (
-  id text primary key, text text not null, score integer,
-  verdict text, explanation text, sources text,
-  created_at timestamptz default now()
-);
-create table logs (
-  id bigserial primary key, claim_id text, step text,
-  status text, message text, ts timestamptz default now()
-);
-create table trends (
-  week text primary key, total integer default 0,
-  false_pct real default 0, mislead_pct real default 0,
-  unverified_pct real default 0, true_pct real default 0,
-  avg_score real default 0
-);
-```
-
-**Step 3 — Configure environment**
+### Install & run locally
 
 ```bash
-cp backend/.env.example backend/.env
-# Fill in your API keys in backend/.env
+cd backend && pip install -r requirements.txt
+cd ../frontend && npm install
+cd .. && bash start.sh
 ```
 
-**Step 4 — Start everything**
+- Frontend: http://localhost:5173  
+- API: http://localhost:8000/docs  
+
+### Environment (`backend/.env`)
+
+Copy from `backend/.env.example` and set:
+
+| Variable | Purpose |
+|----------|---------|
+| `GEMINI_API_KEY` | Gemini REST (hosted / Vercel path) |
+| `NVIDIA_API_KEY` | NVIDIA Build — **Nemotron** when running the OpenClaw pipeline in sandbox |
+| `SERPER_API_KEY` | Web search |
+| `SUPABASE_URL` / `SUPABASE_KEY` | Persistence |
+| `ALLOWED_ORIGINS` | Optional extra CORS origins (comma-separated) |
+
+---
+
+## Deployment (Vercel)
+
+Production URL: **https://clarity-bot-brown.vercel.app**
 
 ```bash
-bash start.sh
-```
-
-Open http://localhost:5173 and submit a claim.
-
----
-
-## How the fact-checking pipeline works
-
-Here's a concrete example. Claim submitted: *"The Great Wall of China
-is visible from space with the naked eye."*
-
-**Step 1 — Extract**
-Gemini reads the claim and identifies the core checkable assertion:
-"The Great Wall of China is visible to the naked eye from space."
-It classifies this as a factual claim (not an opinion or satire).
-
-**Step 2 — Search**
-The backend queries Serper.dev (which returns Google search results) for
-3 sources about this specific assertion. It collects titles, URLs, and
-snippet text from NASA, Snopes, and a BBC article.
-
-**Step 3 — Cross-reference**
-Each source is labeled with its credibility level (HIGH, MEDIUM, or LOW)
-based on a curated registry of trusted domains. Gemini is given the
-original claim alongside the labeled source snippets and asked: does the
-evidence support, partially support, not address, or contradict the claim?
-HIGH sources (like NASA.gov) are weighted strongly; LOW sources are
-discounted. In this case: "contradicts" — NASA astronauts have confirmed
-the wall is too narrow to see from orbit.
-
-**Step 4 — Score**
-The source credibility summary is analyzed: since NASA.gov (a primary
-authority) is among the sources, no score cap is applied. "Contradicts"
-maps to the score range 1–3. Gemini picks score 2, assigns verdict
-"FALSE", and writes a 2-sentence explanation. If only low-credibility
-sources had been found, the score would be capped at 4 and the verdict
-forced to UNVERIFIED.
-
-**Step 5 — Save**
-The result is written to Supabase. The frontend receives the final
-SSE event and displays the ResultCard.
-
-Total time: approximately 12–18 seconds.
-
----
-
-## Dashboard pages
-
-**Check Claim** — The main page. Large text input, submit button,
-and an animated pipeline showing each of the 5 steps completing in
-sequence. The result card slides up when the score is ready.
-
-**History** — Every claim ever submitted, with filter pills
-(All / FALSE / MISLEADING / UNVERIFIED / TRUE) and keyword search.
-Each card expands to show the full fact-check on click.
-
-**Trend Report** — A weekly summary built with hand-coded SVG charts
-(no charting library). Shows a donut chart of verdict distribution and
-a bar chart of daily claims over the past 7 days.
-
-**Agent Logs** — A terminal-style panel that shows every log event
-from the most recent pipeline run. Designed to make the technical
-depth of the system visible during demos.
-
----
-
-## Engineering decisions worth noting
-
-**Why Server-Sent Events instead of WebSockets?**
-SSE is unidirectional (server → client), which is all we need for
-streaming logs. It works over standard HTTP, requires no additional
-infrastructure, and reconnects automatically if the connection drops.
-WebSockets would add complexity with no benefit for this use case.
-
-**Why DB-backed SSE instead of in-memory queues?**
-The original design used in-memory asyncio.Queue per claim. This works
-locally but breaks on Vercel's serverless platform, where each request
-runs in its own stateless function. The SSE endpoint now polls Supabase
-for log rows, which works identically on local dev and in production.
-
-**Why split check and execute into separate endpoints?**
-Vercel serverless functions cannot use FastAPI's BackgroundTasks (no
-shared memory between invocations). The frontend calls `POST /api/check`
-to insert the claim, starts the SSE stream, then calls
-`POST /api/execute/{claim_id}` to run the pipeline synchronously.
-
-**Why plain SVG for charts instead of a charting library?**
-The charts on the Trend Report page are simple enough that a library
-would add more code than it saves. The donut and bar charts are each
-under 50 lines of SVG. No extra bundle size, no version conflicts,
-and full control over the visual output.
-
-**Why separate the 5 pipeline steps into individual files?**
-Each skill has a single job, a predictable input/output shape, and
-its own error handling. This makes the pipeline easy to test in
-isolation — you can run just the scoring step with mock data without
-needing a real PDF or API call. It also makes it easy to swap out
-individual steps (e.g. replace Google Search with a different source).
-
-**Why asyncio.to_thread() for database calls?**
-The Supabase Python client is synchronous. Running it directly inside
-an async FastAPI handler would freeze the server while waiting for the
-database. Wrapping each call in `asyncio.to_thread()` moves the work
-to a thread pool, keeping the async event loop free to handle other
-incoming requests while the database query runs.
-
----
-
-## Deployment
-
-ClarityBot is deployed to Vercel at **https://clarity-bot-brown.vercel.app**.
-
-The app runs as a single Vercel project: `index.py` loads the FastAPI
-backend, and the pre-built React frontend is served from `public/` via
-Vercel's CDN. All API routes live under `/api/...`.
-
-```bash
-# Build frontend and deploy
-bash scripts/vercel-build.sh
+bash scripts/vercel-build.sh   # produces public/
 npx vercel --prod
 ```
 
-Environment variables (`GEMINI_API_KEY`, `SERPER_API_KEY`, `SUPABASE_URL`,
-`SUPABASE_KEY`) are set in the Vercel dashboard. CORS is configured
-automatically using Vercel-injected `VERCEL_URL` and `VERCEL_BRANCH_URL`.
+Set `GEMINI_API_KEY`, `SERPER_API_KEY`, `SUPABASE_URL`, `SUPABASE_KEY` in the Vercel dashboard. CORS picks up `VERCEL_URL` / `VERCEL_BRANCH_URL` automatically alongside `ALLOWED_ORIGINS`.
 
-Function timeout must be set to **300 seconds** (Pro plan) for long-running
-pipeline executions.
+**Function timeout:** configure **300s** max duration for `/api/execute/*` class workloads (paid plan).
 
 ---
 
-## What I'd do differently with more time
+## Security: NemoClaw Sandbox
 
-- **Move the pipeline to a task queue** — Right now the pipeline runs
-  synchronously inside a Vercel serverless function. Under load, this
-  would hit timeouts and concurrency limits. A proper implementation
-  would use something like Celery or Vercel Queues to run pipelines
-  as separate worker processes.
+`nemoclaw/openclaw-sandbox.yaml` defines a **deny-by-default network policy** for running the **OpenClaw** skill pipeline under **NemoClaw** (NVIDIA OpenShell). Allowlisted egress is intentional and minimal:
 
-- **Add user accounts** — Currently anyone can submit claims and see
-  everyone's history. Adding authentication would let each user see
-  only their own history and build their own trend report.
+- **`generativelanguage.googleapis.com`** — Gemini (same skills can run here in the sandbox if you point calls at Gemini).
+- **`google.serper.dev`** — evidence retrieval (Google organic results).
+- **`build.nvidia.com`** — **Nemotron** inference on NVIDIA Build—the LLM endpoint aligned with [why Nemotron drives the OpenClaw path](#why-nemotron-to-run-openclaw-inside-nemoclaw) when you execute inside this sandbox.
 
-- **Dynamic domain reputation** — Source credibility is now built in
-  with a curated registry of trusted domains across 3 topics. A future
-  version could score domain reputation dynamically using PageRank-style
-  signals, citation frequency, and real-time trust indicators rather
-  than a static allowlist.
-
-- **Confidence calibration** — The credibility score is a single number
-  from an LLM. A more rigorous approach would run multiple independent
-  checks and average the results, flagging cases where the checks
-  disagree strongly.
-
-- **Telegram integration** — NemoClaw has a built-in Telegram bridge.
-  With a few additional lines of configuration, users could submit
-  claims and receive results directly in a Telegram chat — no browser
-  required.
+This is the **defense-in-depth** story for judges: **OpenClaw** decides the steps; **NemoClaw** caps where those steps may connect; **Nemotron** (or Gemini, per your wiring) stays on an allowlisted host only. Operational note: a plain `bash start.sh` dev loop may not route through NemoClaw unless you intentionally use `nemoclaw/setup.sh`—read the policy before claiming production guarantees.
 
 ---
 
-## Prizes targeted
+## Roadmap
 
-Built for HackPSU Spring 2026 — Penn State's flagship hackathon.
-
-- IST / OpenClaw Challenge — custom agent with 5 skills
-- MLH Best Use of Gemini API — claim analysis and cross-referencing
-- Base44 Challenge — addresses misinformation and social media impact
-- Best .tech Domain — claritybot.tech
-- Grand Prize — open track
+- [x] Five-skill pipeline with early exit for non-factual claims
+- [x] DB-backed SSE + split check/execute for serverless
+- [x] Source credibility registry + scorer caps
+- [x] Trend aggregation + SVG charts without chart libraries
+- [ ] Per-user auth and private claim history
+- [ ] Queue-based execution (true async) when timeouts become the bottleneck
+- [ ] Evaluation harness with labeled claims (calibration, not vibes)
 
 ---
 
-## About
+## License
 
-Built solo in 24 hours. HackPSU Spring 2026, Penn State ECoRE Building.
-
-**Questions?** Open an issue or reach out directly.
+MIT
