@@ -34,12 +34,25 @@ def _allowed_origins() -> list[str]:
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_PUBLIC_DIR = _REPO_ROOT / "public"
 
-for candidate in [Path("/vercel/path0/public"), _backend_dir / "static"]:
-    if candidate.is_dir():
-        _PUBLIC_DIR = candidate
-        break
+
+def _resolve_public_dir() -> Path:
+    """Prefer full Vite output (index.html + assets/). backend/static only has index."""
+    candidates = [
+        Path("/vercel/path0/public"),
+        _REPO_ROOT / "public",
+        _backend_dir / "static",
+    ]
+    for c in candidates:
+        if c.is_dir() and (c / "index.html").is_file() and (c / "assets").is_dir():
+            return c
+    for c in candidates:
+        if c.is_dir() and (c / "index.html").is_file():
+            return c
+    return _REPO_ROOT / "public"
+
+
+_PUBLIC_DIR = _resolve_public_dir()
 
 app = FastAPI(title="ClarityBot API", version="1.0.0")
 
