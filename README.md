@@ -166,7 +166,7 @@ Google’s **Custom Search JSON API** is not a viable default for new projects (
 | Surface | What you get |
 |--------|----------------|
 | **Check Claim** | Large input, animated 5-step rail driven by SSE log events, result card when `score` is non-null |
-| **History** | All claims from Supabase, verdict filters, keyword search |
+| **History** | All claims from Supabase, verdict filters, keyword search, per-row delete (cascades logs) |
 | **Trend Report** | Weekly verdict mix + activity—**hand-written SVG** (no charting deps) |
 | **Agent Logs** | Terminal aesthetic; reads `lastClaimId` from `localStorage` for continuity after navigation |
 | **Health** | Lightweight polling from the shell layout |
@@ -187,11 +187,12 @@ Frontend rule worth stealing: **all `fetch` and `EventSource` live in `src/api/c
         ▼
 ┌────────────────────────────────────────────────────────────────────┐
 │  FastAPI (`backend/main.py`, routes under `/api`)                   │
-│  · POST /check          insert claim                                │
-│  · POST /execute/{id}   run pipeline (sync in one invocation)       │
-│  · GET  /results, /trends                                           │
-│  · GET  /logs/stream    SSE (poll Supabase)                         │
-│  · GET  /logs/{id}      REST log fetch                              │
+│  · POST   /check          insert claim                              │
+│  · POST   /execute/{id}   run pipeline (sync in one invocation)     │
+│  · GET    /results, /results/{id}, /trends                          │
+│  · DELETE /results/{id}   cascade delete claim + logs               │
+│  · GET    /logs/stream    SSE (poll Supabase)                       │
+│  · GET    /logs/{id}      REST log fetch                            │
 └───────┬───────────────────────────────┬────────────────────────────┘
         │                               │
         ▼                               ▼
@@ -383,9 +384,11 @@ claritybot/
 │   ├── openclaw-sandbox.yaml   # network allowlist policy
 │   └── setup.sh
 ├── index.py                    # Vercel entry → imports backend app
-├── scripts/vercel-build.sh     # build frontend → public/
+├── scripts/vercel-build.sh     # build frontend → public/ (+ backend/static, .vercel/output/static)
 ├── vercel.json
-└── requirements.txt            # root deps for Vercel builder
+├── pyproject.toml              # Python project metadata for Vercel builder
+├── start.sh                    # local dev: starts FastAPI + Vite together
+└── requirements.txt            # Python deps (shared by local + Vercel)
 ```
 
 ---
@@ -402,8 +405,8 @@ claritybot/
 ### Install & run locally
 
 ```bash
-cd backend && pip install -r requirements.txt
-cd ../frontend && npm install
+pip install -r requirements.txt        # root deps (shared with Vercel builder)
+cd frontend && npm install
 cd .. && bash start.sh
 ```
 
